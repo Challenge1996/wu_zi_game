@@ -909,7 +909,7 @@ def main():
     print("=" * 60)
     print("五子棋游戏服务端 - 支持多玩家匹配对战")
     print("=" * 60)
-    print("服务端将在 http://localhost:5000 运行")
+    print("服务端将在 http://localhost:5001 运行")
     print("\nAPI接口说明：")
     print("=" * 60)
     print("\n【玩家相关】")
@@ -950,7 +950,7 @@ def main():
     print("=" * 60)
     
     # 启动Flask服务
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    app.run(host='0.0.0.0', port=5001, debug=True, threaded=True)
 
 
 if __name__ == '__main__':
