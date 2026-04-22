@@ -545,12 +545,32 @@ def make_coin_choice():
         }), 400
     
     game = room['game']
-    success, message = game.player_make_choice(player_id, choice)
+    result = game.player_make_choice(player_id, choice)
     
-    return jsonify({
-        "success": success,
-        "message": message
-    })
+    # 处理返回值
+    if isinstance(result, tuple):
+        success, data = result
+        if isinstance(data, dict):
+            # 自动分配的情况
+            return jsonify({
+                "success": success,
+                "auto_assigned": data.get('auto_assigned', False),
+                "player_choice": data.get('player_choice'),
+                "other_player_choice": data.get('other_player_choice'),
+                "other_player_id": data.get('other_player_id'),
+                "message": data.get('message')
+            })
+        else:
+            return jsonify({
+                "success": success,
+                "message": data
+            })
+    else:
+        # 不应该到达这里
+        return jsonify({
+            "success": False,
+            "message": "处理选择时发生错误"
+        })
 
 @app.route('/api/game/resolve_coin', methods=['POST'])
 def resolve_coin_toss_api():
