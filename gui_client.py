@@ -892,7 +892,6 @@ class MainWindow(QMainWindow):
         
         # 信号对象
         self.signals = GameSignals()
-        self.setup_signal_connections()
         
         # 轮询线程
         self.polling_thread = None
@@ -901,6 +900,9 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.setup_menu()
         self.setup_status_bar()
+        
+        # 必须在init_ui之后连接信号，因为timer_widget等控件在init_ui中创建
+        self.setup_signal_connections()
         
         # 设置窗口
         self.setWindowTitle("五子棋 - 网络对战")
