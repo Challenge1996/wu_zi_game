@@ -42,6 +42,50 @@ class GameSignals(QObject):
     coin_result = pyqtSignal(str, bool)  # result, is_my_win
     turn_changed = pyqtSignal(int)  # current player color
     show_color_choice = pyqtSignal()  # 显示颜色选择对话框
+    
+    # 计时器相关信号
+    start_waiting_timer = pyqtSignal()
+    stop_waiting_timer = pyqtSignal()
+    start_game_timer = pyqtSignal(int)  # current_player
+    stop_game_timer = pyqtSignal()
+    reset_timer = pyqtSignal()
+    switch_timer_player = pyqtSignal()
+    
+    # 按钮状态信号
+    disable_coin_button = pyqtSignal()
+    enable_coin_button = pyqtSignal()
+    disable_undo_button = pyqtSignal()
+    enable_undo_button = pyqtSignal()
+    disable_reset_button = pyqtSignal()
+    enable_reset_button = pyqtSignal()
+    
+    # 棋盘状态信号
+    enable_board_click = pyqtSignal()
+    disable_board_click = pyqtSignal()
+    
+    # 游戏状态信号
+    update_game_phase = pyqtSignal(str)  # phase
+    update_status_label = pyqtSignal(str)  # text
+    
+    # 硬币结果详细信号
+    coin_toss_completed = pyqtSignal(dict)  # {'winner_id': str, 'coin_result': str, 'is_my_win': bool}
+    
+    # 颜色选择后信号
+    color_chosen = pyqtSignal(int)  # color (1=黑, 2=白)
+    
+    # 挑战相关信号
+    show_challenge_received = pyqtSignal(dict)  # 收到挑战
+    show_players_for_challenge = pyqtSignal(list)  # 显示可挑战的玩家
+    
+    # 对话框显示信号
+    show_player_list_dialog = pyqtSignal(list)  # 显示玩家列表对话框
+    show_challenge_list_dialog = pyqtSignal(list)  # 显示挑战列表对话框
+    
+    # 游戏状态更新信号（用于reset等操作）
+    game_reset = pyqtSignal()  # 游戏重置
+    update_my_color = pyqtSignal(int)  # 更新我的颜色显示 (1=黑, 2=白)
+    enable_game_controls = pyqtSignal()  # 启用游戏控件
+    disable_game_controls = pyqtSignal()  # 禁用游戏控件
 
 # ==================== 棋盘控件 ====================
 
@@ -1108,6 +1152,49 @@ class MainWindow(QMainWindow):
         self.signals.coin_toss_phase.connect(self.on_coin_toss_phase)
         self.signals.show_color_choice.connect(self.on_show_color_choice)
         
+        # 计时器相关信号
+        self.signals.start_waiting_timer.connect(self.timer_widget.start_waiting)
+        self.signals.stop_waiting_timer.connect(self.timer_widget.stop_waiting)
+        self.signals.start_game_timer.connect(self.timer_widget.start_timer)
+        self.signals.stop_game_timer.connect(self.timer_widget.stop_timer)
+        self.signals.reset_timer.connect(self.timer_widget.reset_timer)
+        self.signals.switch_timer_player.connect(self.timer_widget.switch_player)
+        
+        # 按钮状态信号
+        self.signals.disable_coin_button.connect(lambda: self.coin_btn.setEnabled(False))
+        self.signals.enable_coin_button.connect(lambda: self.coin_btn.setEnabled(True))
+        self.signals.disable_undo_button.connect(lambda: self.undo_btn.setEnabled(False))
+        self.signals.enable_undo_button.connect(lambda: self.undo_btn.setEnabled(True))
+        self.signals.disable_reset_button.connect(lambda: self.reset_btn.setEnabled(False))
+        self.signals.enable_reset_button.connect(lambda: self.reset_btn.setEnabled(True))
+        
+        # 棋盘状态信号
+        self.signals.enable_board_click.connect(lambda: self.board.set_click_enabled(True))
+        self.signals.disable_board_click.connect(lambda: self.board.set_click_enabled(False))
+        
+        # 游戏状态信号
+        self.signals.update_game_phase.connect(self._update_game_phase)
+        self.signals.update_status_label.connect(self.status_label.setText)
+        
+        # 硬币结果详细信号
+        self.signals.coin_toss_completed.connect(self.on_coin_toss_completed)
+        
+        # 颜色选择后信号
+        self.signals.color_chosen.connect(self.on_color_chosen)
+        
+        # 挑战相关信号
+        self.signals.show_players_for_challenge.connect(self.show_players_for_challenge)
+        
+        # 对话框显示信号
+        self.signals.show_player_list_dialog.connect(self._show_player_list_dialog)
+        self.signals.show_challenge_list_dialog.connect(self._show_challenge_list_dialog)
+        
+        # 游戏状态更新信号
+        self.signals.game_reset.connect(self._on_game_reset)
+        self.signals.update_my_color.connect(self._update_my_color)
+        self.signals.enable_game_controls.connect(self._enable_game_controls)
+        self.signals.disable_game_controls.connect(self._disable_game_controls)
+        
     # ==================== 网络请求方法 ====================
     
     def _request(self, method, endpoint, data=None, params=None):
@@ -1275,9 +1362,8 @@ class MainWindow(QMainWindow):
             if success and result.get('success'):
                 players = result.get('players', [])
                 
-                # 在主线程显示对话框
-                dialog = PlayerListDialog(players, self.player_id, self)
-                dialog.exec_()
+                # 通过信号在主线程显示对话框
+                self.signals.show_player_list_dialog.emit(players)
             else:
                 self.signals.error_occurred.emit(f"获取玩家列表失败: {result.get('message', '未知错误')}")
         
@@ -1397,8 +1483,8 @@ class MainWindow(QMainWindow):
                 auto_assigned = result.get('auto_assigned', False)
                 
                 if auto_assigned:
-                    player_choice = result.get('player_choice', choice)
-                    other_choice = result.get('other_player_choice', 1 - choice)
+                    player_choice = result.get('player_choice', '正面' if choice == 0 else '反面')
+                    other_choice = result.get('other_player_choice', '反面' if choice == 0 else '正面')
                     
                     self.signals.message_received.emit(f"✓ 您选择了: {player_choice}")
                     self.signals.message_received.emit(f"✓ 系统已自动为对方分配: {other_choice}")
@@ -1413,18 +1499,22 @@ class MainWindow(QMainWindow):
                     if resolve_success and resolve_result.get('success'):
                         coin_result = resolve_result.get('coin_result')
                         winner_id = resolve_result.get('winner_id')
+                        winner_choice = resolve_result.get('winner_choice')
+                        loser_choice = resolve_result.get('loser_choice')
                         
                         self.signals.message_received.emit(f"✓ 硬币结果: {coin_result}")
                         
                         is_my_win = winner_id == self.player_id
                         if is_my_win:
-                            self.signals.message_received.emit("🎉 恭喜！您赢得猜先！请选择执子颜色。")
+                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！请选择执子颜色。")
                             
-                            # 在主线程显示颜色选择对话框
+                            # 通过信号显示颜色选择对话框
                             self.signals.show_color_choice.emit()
                         else:
-                            self.signals.message_received.emit("对方赢得猜先，等待对方选择颜色...")
-                            self.timer_widget.start_waiting()
+                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。等待对方选择颜色...")
+                            
+                            # 通过信号启动等待计时器
+                            self.signals.start_waiting_timer.emit()
                     else:
                         self.signals.error_occurred.emit(f"解析硬币结果失败: {resolve_result.get('message', '未知错误')}")
                 else:
@@ -1432,9 +1522,9 @@ class MainWindow(QMainWindow):
                     self.signals.message_received.emit("✓ 硬币选择已提交")
                     self.signals.message_received.emit("等待对方选择...")
                     
-                    # 禁用按钮，等待对方
-                    self.coin_btn.setEnabled(False)
-                    self.timer_widget.start_waiting()
+                    # 通过信号禁用按钮和启动等待计时器
+                    self.signals.disable_coin_button.emit()
+                    self.signals.start_waiting_timer.emit()
             else:
                 self.signals.error_occurred.emit(f"提交选择失败: {result.get('message', '未知错误')}")
         
@@ -1460,6 +1550,107 @@ class MainWindow(QMainWindow):
         if color_dialog.exec_() == QDialog.Accepted:
             color = color_dialog.get_color()
             self.choose_color(color)
+    
+    # ==================== 新增槽函数（线程安全） ====================
+    
+    def _show_player_list_dialog(self, players):
+        """显示玩家列表对话框（主线程）"""
+        if not players:
+            self.append_log("当前没有其他在线玩家")
+            return
+        
+        # 显示玩家列表对话框
+        dialog = PlayerListDialog(players, self.player_id, self)
+        if dialog.exec_() == QDialog.Accepted:
+            target_player_id = dialog.get_selected_player()
+            if target_player_id:
+                self.challenge_player(target_player_id)
+    
+    def _show_challenge_list_dialog(self, challenges):
+        """显示挑战列表对话框（主线程）"""
+        if not challenges:
+            self.append_log("当前没有挑战")
+            return
+        
+        # 显示挑战列表对话框
+        dialog = ChallengeListDialog(challenges, self)
+        if dialog.exec_() == QDialog.Accepted:
+            action, challenge_id = dialog.get_result()
+            if action == 'accept':
+                self.accept_challenge(challenge_id)
+            elif action == 'decline':
+                self.decline_challenge(challenge_id)
+    
+    def _update_game_phase(self, phase):
+        """更新游戏阶段（主线程）"""
+        self.game_phase = phase
+        if phase == 'playing':
+            self.status_label.setText("游戏状态: 游戏进行中")
+        elif phase == 'coin_toss':
+            self.status_label.setText("游戏状态: 抛硬币阶段")
+        elif phase == 'waiting':
+            self.status_label.setText("游戏状态: 等待开始")
+        elif phase == 'finished':
+            self.status_label.setText("游戏状态: 已结束")
+    
+    def on_coin_toss_completed(self, data):
+        """硬币结果完成（主线程）"""
+        winner_id = data.get('winner_id')
+        coin_result = data.get('coin_result')
+        winner_choice = data.get('winner_choice', coin_result)
+        loser_choice = data.get('loser_choice')
+        is_my_win = data.get('is_my_win', False)
+        
+        self.append_log(f"✓ 硬币结果: {coin_result}")
+        
+        if is_my_win:
+            self.append_log(f"🎉 恭喜！您选择了{winner_choice}，猜对了！请选择执子颜色。")
+            self.signals.show_color_choice.emit()
+        else:
+            self.append_log(f"对方选择了{winner_choice}，猜对了。等待对方选择颜色...")
+            self.signals.start_waiting_timer.emit()
+    
+    def on_color_chosen(self, color):
+        """颜色选择后（主线程）"""
+        self.my_color = color
+        self._update_my_color(color)
+    
+    def _update_my_color(self, color):
+        """更新我的颜色显示（主线程）"""
+        if color == 1:
+            self.my_color_label.setText("⚫ 执黑棋")
+            self.my_color_label.setStyleSheet("color: black; background-color: white; padding: 5px; border-radius: 3px;")
+        else:
+            self.my_color_label.setText("⚪ 执白棋")
+            self.my_color_label.setStyleSheet("color: white; background-color: black; padding: 5px; border-radius: 3px;")
+    
+    def _on_game_reset(self):
+        """游戏重置（主线程）"""
+        self.board.clear_board()
+        self.board.set_click_enabled(False)
+        self.timer_widget.reset_timer()
+        self.game_phase = "coin_toss"
+        self.status_label.setText("游戏状态: 抛硬币阶段")
+        self.coin_btn.setEnabled(True)
+        self.undo_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
+    
+    def _enable_game_controls(self):
+        """启用游戏控件（主线程）"""
+        self.board.set_click_enabled(True)
+        self.undo_btn.setEnabled(True)
+        self.reset_btn.setEnabled(True)
+        self.coin_btn.setEnabled(False)
+    
+    def _disable_game_controls(self):
+        """禁用游戏控件（主线程）"""
+        self.board.set_click_enabled(False)
+        self.undo_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
+    
+    def show_players_for_challenge(self, players):
+        """显示可挑战的玩家列表（主线程）"""
+        self._show_player_list_dialog(players)
         
     def resolve_coin_toss(self):
         """解决抛硬币结果"""
@@ -1475,27 +1666,24 @@ class MainWindow(QMainWindow):
             if success and result.get('success'):
                 coin_result = result.get('coin_result')
                 winner_id = result.get('winner_id')
-                
-                self.signals.message_received.emit(f"✓ 硬币结果: {coin_result}")
+                winner_choice = result.get('winner_choice')
+                loser_choice = result.get('loser_choice')
                 
                 is_my_win = winner_id == self.player_id
-                if is_my_win:
-                    self.signals.message_received.emit("🎉 恭喜！您猜对了！请选择执子颜色。")
-                    
-                    # 显示颜色选择对话框
-                    QApplication.processEvents()
-                    color_dialog = ColorChoiceDialog(self)
-                    if color_dialog.exec_() == QDialog.Accepted:
-                        color = color_dialog.get_color()
-                        self.choose_color(color)
-                else:
-                    self.signals.message_received.emit("对方猜对了，等待对方选择颜色...")
-                    self.timer_widget.start_waiting()
+                
+                # 通过信号传递结果到主线程处理
+                self.signals.coin_toss_completed.emit({
+                    'winner_id': winner_id,
+                    'coin_result': coin_result,
+                    'winner_choice': winner_choice,
+                    'loser_choice': loser_choice,
+                    'is_my_win': is_my_win
+                })
             else:
                 # 可能是平局，需要重新猜
                 if "平局" in str(result):
                     self.signals.message_received.emit("平局！请重新选择硬币")
-                    self.coin_btn.setEnabled(True)
+                    self.signals.enable_coin_button.emit()
                 else:
                     self.signals.error_occurred.emit(f"解析硬币结果失败: {result}")
         
@@ -1520,15 +1708,9 @@ class MainWindow(QMainWindow):
             success, result = self._request('POST', '/api/game/choose_color', data)
             if success and result.get('success'):
                 self.signals.message_received.emit(f"✓ 已选择{color_name}")
-                self.my_color = color_choice
                 
-                # 更新颜色显示
-                if self.my_color == 1:
-                    self.my_color_label.setText("⚫ 执黑棋")
-                    self.my_color_label.setStyleSheet("color: black; background-color: white; padding: 5px; border-radius: 3px;")
-                else:
-                    self.my_color_label.setText("⚪ 执白棋")
-                    self.my_color_label.setStyleSheet("color: white; background-color: black; padding: 5px; border-radius: 3px;")
+                # 通过信号更新颜色显示
+                self.signals.update_my_color.emit(color_choice)
                 
                 # 确定第二个玩家颜色并开始游戏
                 self.finalize_colors()
@@ -1570,17 +1752,12 @@ class MainWindow(QMainWindow):
                     success2, result2 = self._request('POST', '/api/game/finalize_colors', data)
                     if success2 and result2.get('success'):
                         self.signals.message_received.emit("✓ 游戏开始！")
-                        self.game_phase = "playing"
-                        self.status_label.setText("游戏状态: 游戏进行中")
                         
-                        # 启用游戏按钮
-                        self.board.set_click_enabled(True)
-                        self.undo_btn.setEnabled(True)
-                        self.reset_btn.setEnabled(True)
-                        
-                        # 开始计时
-                        self.timer_widget.stop_waiting()
-                        self.timer_widget.start_timer(1)
+                        # 通过信号启用游戏控件和开始计时
+                        self.signals.update_game_phase.emit("playing")
+                        self.signals.enable_game_controls.emit()
+                        self.signals.stop_waiting_timer.emit()
+                        self.signals.start_game_timer.emit(1)
                         
                         # 更新回合显示
                         self.update_turn_display()
@@ -1618,8 +1795,8 @@ class MainWindow(QMainWindow):
                 game_state = result.get('game_state', {})
                 self.signals.room_updated.emit({'game_state': game_state})
                 
-                # 切换计时器
-                self.timer_widget.switch_player()
+                # 通过信号切换计时器
+                self.signals.switch_timer_player.emit()
             else:
                 self.signals.error_occurred.emit(f"落子失败: {result.get('message', '未知错误')}")
         
@@ -1680,15 +1857,8 @@ class MainWindow(QMainWindow):
             if success and result.get('success'):
                 self.signals.message_received.emit("✓ 游戏已重置")
                 
-                # 重置UI状态
-                self.board.clear_board()
-                self.board.set_click_enabled(False)
-                self.timer_widget.reset_timer()
-                self.game_phase = "coin_toss"
-                self.status_label.setText("游戏状态: 抛硬币阶段")
-                self.coin_btn.setEnabled(True)
-                self.undo_btn.setEnabled(False)
-                self.reset_btn.setEnabled(False)
+                # 通过信号重置UI状态
+                self.signals.game_reset.emit()
                 
                 # 更新游戏状态
                 game_state = result.get('game_state', {})
