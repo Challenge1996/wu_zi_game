@@ -1354,7 +1354,7 @@ class MainWindow(QMainWindow):
         thread.start()
         
     def show_player_list(self):
-        """显示玩家列表"""
+        """显示玩家列表并可发起挑战"""
         if not self.player_id:
             QMessageBox.warning(self, "提示", "请先登录！")
             return
@@ -1364,8 +1364,18 @@ class MainWindow(QMainWindow):
             if success and result.get('success'):
                 players = result.get('players', [])
                 
-                # 通过信号在主线程显示对话框
-                self.signals.show_player_list_dialog.emit(players)
+                # 过滤掉自己
+                available_players = [
+                    p for p in players 
+                    if p.get('id') != self.player_id
+                ]
+                
+                if not available_players:
+                    self.signals.message_received.emit("没有可用的在线玩家")
+                    return
+                
+                # 通过信号在主线程显示挑战对话框
+                self.signals.player_list_updated.emit(available_players)
             else:
                 self.signals.error_occurred.emit(f"获取玩家列表失败: {result.get('message', '未知错误')}")
         
@@ -1561,12 +1571,9 @@ class MainWindow(QMainWindow):
             self.append_log("当前没有其他在线玩家")
             return
         
-        # 显示玩家列表对话框
+        # 显示玩家列表对话框（只读，用于查看）
         dialog = PlayerListDialog(players, self.player_id, self)
-        if dialog.exec_() == QDialog.Accepted:
-            target_player_id = dialog.get_selected_player()
-            if target_player_id:
-                self.challenge_player(target_player_id)
+        dialog.exec_()
     
     def _show_challenge_list_dialog(self, challenges):
         """显示挑战列表对话框（主线程）"""
