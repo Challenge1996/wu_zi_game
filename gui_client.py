@@ -41,6 +41,7 @@ class GameSignals(QObject):
     coin_toss_phase = pyqtSignal()
     coin_result = pyqtSignal(str, bool)  # result, is_my_win
     turn_changed = pyqtSignal(int)  # current player color
+    show_color_choice = pyqtSignal()  # 显示颜色选择对话框
 
 # ==================== 棋盘控件 ====================
 
@@ -1105,6 +1106,7 @@ class MainWindow(QMainWindow):
         self.signals.challenge_list_updated.connect(self.on_challenge_list_updated)
         self.signals.game_over.connect(self.on_game_over)
         self.signals.coin_toss_phase.connect(self.on_coin_toss_phase)
+        self.signals.show_color_choice.connect(self.on_show_color_choice)
         
     # ==================== 网络请求方法 ====================
     
@@ -1391,12 +1393,48 @@ class MainWindow(QMainWindow):
             
             success, result = self._request('POST', '/api/game/coin_choice', data)
             if success and result.get('success'):
-                self.signals.message_received.emit("✓ 硬币选择已提交")
-                self.signals.message_received.emit("等待对方选择...")
+                # 检查是否自动分配了对方的选择
+                auto_assigned = result.get('auto_assigned', False)
                 
-                # 禁用按钮，等待对方
-                self.coin_btn.setEnabled(False)
-                self.timer_widget.start_waiting()
+                if auto_assigned:
+                    player_choice = result.get('player_choice', choice)
+                    other_choice = result.get('other_player_choice', 1 - choice)
+                    
+                    self.signals.message_received.emit(f"✓ 您选择了: {player_choice}")
+                    self.signals.message_received.emit(f"✓ 系统已自动为对方分配: {other_choice}")
+                    
+                    # 立即解析硬币结果
+                    self.signals.message_received.emit("正在解析抛硬币结果...")
+                    
+                    # 调用resolve_coin_toss
+                    resolve_data = {'room_id': self.current_room_id}
+                    resolve_success, resolve_result = self._request('POST', '/api/game/resolve_coin', resolve_data)
+                    
+                    if resolve_success and resolve_result.get('success'):
+                        coin_result = resolve_result.get('coin_result')
+                        winner_id = resolve_result.get('winner_id')
+                        
+                        self.signals.message_received.emit(f"✓ 硬币结果: {coin_result}")
+                        
+                        is_my_win = winner_id == self.player_id
+                        if is_my_win:
+                            self.signals.message_received.emit("🎉 恭喜！您赢得猜先！请选择执子颜色。")
+                            
+                            # 在主线程显示颜色选择对话框
+                            self.signals.show_color_choice.emit()
+                        else:
+                            self.signals.message_received.emit("对方赢得猜先，等待对方选择颜色...")
+                            self.timer_widget.start_waiting()
+                    else:
+                        self.signals.error_occurred.emit(f"解析硬币结果失败: {resolve_result.get('message', '未知错误')}")
+                else:
+                    # 旧的逻辑：等待对方选择
+                    self.signals.message_received.emit("✓ 硬币选择已提交")
+                    self.signals.message_received.emit("等待对方选择...")
+                    
+                    # 禁用按钮，等待对方
+                    self.coin_btn.setEnabled(False)
+                    self.timer_widget.start_waiting()
             else:
                 self.signals.error_occurred.emit(f"提交选择失败: {result.get('message', '未知错误')}")
         
@@ -1409,6 +1447,19 @@ class MainWindow(QMainWindow):
         self.game_phase = "coin_toss"
         self.status_label.setText("游戏状态: 抛硬币阶段")
         self.append_log("进入抛硬币阶段，请选择硬币结果")
+        
+    def on_show_color_choice(self):
+        """显示颜色选择对话框"""
+        self.append_log("请选择执子颜色...")
+        
+        # 停止等待计时
+        self.timer_widget.stop_waiting()
+        
+        # 显示颜色选择对话框
+        color_dialog = ColorChoiceDialog(self)
+        if color_dialog.exec_() == QDialog.Accepted:
+            color = color_dialog.get_color()
+            self.choose_color(color)
         
     def resolve_coin_toss(self):
         """解决抛硬币结果"""

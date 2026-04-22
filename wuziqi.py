@@ -170,13 +170,61 @@ class WuziqiGame:
         if player_id in self.player_choices:
             return False, "您已经进行了猜测"
         
+        # 记录当前玩家的选择
         self.player_choices[player_id] = choice
-        return True, f"玩家 {player_id} 猜测：{'正面' if choice == 0 else '反面'}"
+        choice_name = "正面" if choice == 0 else "反面"
+        
+        # 检查是否有两个玩家
+        all_players = [p for p in self.players.values() if p is not None]
+        
+        # 如果只有一个玩家选择了，自动为另一个玩家分配相反的选择
+        if len(all_players) == 2 and len(self.player_choices) == 1:
+            # 找到另一个玩家
+            other_player = None
+            for p in all_players:
+                if p != player_id:
+                    other_player = p
+                    break
+            
+            if other_player:
+                # 分配相反的选择
+                other_choice = 1 - choice
+                self.player_choices[other_player] = other_choice
+                other_choice_name = "正面" if other_choice == 0 else "反面"
+                
+                return True, {
+                    "auto_assigned": True,
+                    "player_choice": choice_name,
+                    "other_player_choice": other_choice_name,
+                    "other_player_id": other_player,
+                    "message": f"您选择了{choice_name}，系统已自动为对方分配{other_choice_name}"
+                }
+        
+        return True, f"玩家 {player_id} 猜测：{choice_name}"
 
     def resolve_coin_toss(self):
         """解决抛硬币结果"""
         if self.game_phase != "coin_toss":
             return False, "不在抛硬币阶段"
+        
+        # 如果只有一个玩家选择了，尝试自动分配
+        all_players = [p for p in self.players.values() if p is not None]
+        if len(all_players) == 2 and len(self.player_choices) == 1:
+            # 获取已选择的玩家和选择
+            player_id = list(self.player_choices.keys())[0]
+            choice = self.player_choices[player_id]
+            
+            # 找到另一个玩家
+            other_player = None
+            for p in all_players:
+                if p != player_id:
+                    other_player = p
+                    break
+            
+            if other_player:
+                # 分配相反的选择
+                other_choice = 1 - choice
+                self.player_choices[other_player] = other_choice
         
         if len(self.player_choices) < 2:
             return False, "还有玩家未进行猜测"
@@ -189,22 +237,27 @@ class WuziqiGame:
         player1_choice = self.player_choices[player1_id]
         player2_choice = self.player_choices[player2_id]
         
-        winner_id = None
-        if player1_choice == self.coin_result and player2_choice != self.coin_result:
-            winner_id = player1_id
-        elif player2_choice == self.coin_result and player1_choice != self.coin_result:
-            winner_id = player2_id
-        else:
-            # 如果都猜对或都猜错，重新抛硬币
-            self.coin_result = random.randint(0, 1)
-            self.player_choices = {}
-            return False, "平局！重新抛硬币，请再次猜测"
+        # 简化逻辑：硬币结果就是先选择的玩家的选择
+        # 这样先选的玩家"猜对"，可以选择颜色
+        # 或者：随机选择一个赢家（更公平）
+        
+        # 方案：如果玩家选择不同，选择猜正面的玩家优先
+        # 或者直接随机决定赢家（更简单）
+        
+        # 让我们使用一个简单的公平方式：随机选择赢家
+        winner_id = random.choice(player_ids)
+        
+        # 记录硬币结果（赢家的选择）
+        self.coin_result = self.player_choices[winner_id]
         
         # 猜对的玩家可以选择执黑棋或白棋
         return True, {
             "winner_id": winner_id,
             "coin_result": "正面" if self.coin_result == 0 else "反面",
-            "message": f"玩家 {winner_id} 猜对了！硬币结果是{'正面' if self.coin_result == 0 else '反面'}。请选择执黑棋或白棋。"
+            "winner_choice": "正面" if self.coin_result == 0 else "反面",
+            "loser_id": player2_id if winner_id == player1_id else player1_id,
+            "loser_choice": "正面" if self.player_choices[player2_id if winner_id == player1_id else player1_id] == 0 else "反面",
+            "message": f"玩家 {winner_id} 赢得猜先！硬币结果是{'正面' if self.coin_result == 0 else '反面'}。请选择执黑棋或白棋。"
         }
 
     def player_choose_color(self, player_id, color_choice):
