@@ -270,7 +270,6 @@ class WuziqiGame:
         
         # 记录玩家选择
         self.players[color_choice] = player_id
-        self.players[3 - color_choice] = None  # 另一个颜色暂时设为None，等另一个玩家确认
         
         return True, f"玩家 {player_id} 选择了{'黑棋' if color_choice == 1 else '白棋'}"
 
@@ -291,6 +290,9 @@ class WuziqiGame:
         
         # 分配给第二个玩家
         self.players[unassigned_color] = player2_id
+        
+        # 重置当前玩家为黑棋（1），确保黑棋先手
+        self.current_player = 1
         
         # 进入游戏阶段
         self.game_phase = "playing"
