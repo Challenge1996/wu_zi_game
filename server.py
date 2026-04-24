@@ -358,6 +358,7 @@ def list_challenges():
                 'challenged': challenge['challenged'],
                 'challenged_name': players[challenge['challenged']]['name'] if challenge['challenged'] in players else None,
                 'status': challenge['status'],
+                'room_id': challenge.get('room_id'),  # 添加room_id
                 'created_at': challenge['created_at'],
                 'expires_at': challenge['expires_at'],
                 'is_my_challenge': challenge['challenger'] == player_id
@@ -409,6 +410,9 @@ def accept_challenge():
     room_id = generate_id()
     challenger_name = players[challenge['challenger']]['name']
     challenged_name = players[player_id]['name']
+    
+    # 保存room_id到挑战对象
+    challenge['room_id'] = room_id
     
     rooms[room_id] = {
         'id': room_id,
