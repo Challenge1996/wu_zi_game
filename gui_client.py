@@ -1511,22 +1511,44 @@ class MainWindow(QMainWindow):
                     if resolve_success and resolve_result.get('success'):
                         coin_result = resolve_result.get('coin_result')
                         winner_id = resolve_result.get('winner_id')
+                        loser_id = resolve_result.get('loser_id')
                         winner_choice = resolve_result.get('winner_choice')
                         loser_choice = resolve_result.get('loser_choice')
+                        winner_color = resolve_result.get('winner_color', 1)
+                        loser_color = resolve_result.get('loser_color', 2)
                         
                         self.signals.message_received.emit(f"✓ 硬币结果: {coin_result}")
                         
                         is_my_win = winner_id == self.player_id
+                        
                         if is_my_win:
-                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！请选择执子颜色。")
-                            
-                            # 通过信号显示颜色选择对话框
-                            self.signals.show_color_choice.emit()
+                            # 我赢了，执黑棋
+                            self.my_color = winner_color  # 1 = 黑棋
+                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！您执黑棋（先手）。")
+                            self.signals.update_my_color.emit(self.my_color)
                         else:
-                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。等待对方选择颜色...")
-                            
-                            # 通过信号启动等待计时器
-                            self.signals.start_waiting_timer.emit()
+                            # 我输了，执白棋
+                            self.my_color = loser_color  # 2 = 白棋
+                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。您执白棋（后手）。")
+                            self.signals.update_my_color.emit(self.my_color)
+                        
+                        # 游戏正式开始
+                        self.signals.message_received.emit("✓ 游戏开始！黑棋先下。")
+                        
+                        # 停止等待计时器
+                        self.signals.stop_waiting_timer.emit()
+                        
+                        # 更新游戏状态
+                        self.signals.update_game_phase.emit("playing")
+                        
+                        # 启用游戏控件
+                        self.signals.enable_game_controls.emit()
+                        
+                        # 启动游戏计时器（从黑棋开始）
+                        self.signals.start_game_timer.emit(1)
+                        
+                        # 更新回合显示
+                        self.update_turn_display()
                     else:
                         self.signals.error_occurred.emit(f"解析硬币结果失败: {resolve_result.get('message', '未知错误')}")
                 else:
