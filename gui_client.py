@@ -1741,15 +1741,28 @@ class MainWindow(QMainWindow):
             
             if success and result.get('success'):
                 room = result.get('room', {})
-                player1 = room.get('player1')
-                player2 = room.get('player2')
                 
                 # 找到另一个玩家
                 other_player_id = None
-                if player1 and player1 != self.player_id:
-                    other_player_id = player1
-                elif player2 and player2 != self.player_id:
-                    other_player_id = player2
+                
+                # 优先使用 challenger_id 和 challenged_id（新字段）
+                challenger_id = room.get('challenger_id')
+                challenged_id = room.get('challenged_id')
+                
+                if challenger_id and challenged_id:
+                    if self.player_id == challenger_id:
+                        other_player_id = challenged_id
+                    elif self.player_id == challenged_id:
+                        other_player_id = challenger_id
+                else:
+                    # 向后兼容：使用 player1 和 player2
+                    player1 = room.get('player1')
+                    player2 = room.get('player2')
+                    
+                    if player1 and player1 != self.player_id:
+                        other_player_id = player1
+                    elif player2 and player2 != self.player_id:
+                        other_player_id = player2
                 
                 if other_player_id:
                     # 确定颜色
@@ -1916,6 +1929,7 @@ class MainWindow(QMainWindow):
                     
                     if success and result.get('success'):
                         challenges = result.get('challenges', [])
+                        
                         # 检查是否有新的待处理挑战
                         pending = [c for c in challenges 
                                   if c.get('status') == 'pending' 
@@ -1924,6 +1938,26 @@ class MainWindow(QMainWindow):
                             self.signals.message_received.emit(
                                 f"📢 您收到了 {len(pending)} 个新挑战！"
                             )
+                        
+                        # 检查我发起的挑战是否已被接受
+                        if not self.current_room_id:
+                            accepted = [c for c in challenges
+                                      if c.get('status') == 'accepted'
+                                      and c.get('is_my_challenge')
+                                      and c.get('room_id')]
+                            if accepted:
+                                # 挑战已被接受，获取room_id
+                                challenge = accepted[0]
+                                room_id = challenge.get('room_id')
+                                self.current_room_id = room_id
+                                
+                                self.signals.message_received.emit("✓ 您的挑战已被接受！")
+                                self.signals.message_received.emit(f"  房间ID: {room_id}")
+                                self.signals.message_received.emit("进入抛硬币阶段，请选择硬币结果")
+                                
+                                # 启用硬币按钮
+                                self.signals.enable_coin_button.emit()
+                                self.signals.update_game_phase.emit("coin_toss")
                 
                 time.sleep(2)  # 每2秒轮询一次
                 
@@ -2013,6 +2047,7 @@ class MainWindow(QMainWindow):
             else:
                 self.turn_label.setText(f"当前: {current_name}的回合")
                 self.turn_label.setStyleSheet("color: #4a90d9; font-weight: bold;")
+                self.board.set_click_enabled(False)  # 禁用棋盘点击
                 
     def on_game_over(self, winner):
         """游戏结束"""
