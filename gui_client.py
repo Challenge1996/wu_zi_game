@@ -1511,22 +1511,44 @@ class MainWindow(QMainWindow):
                     if resolve_success and resolve_result.get('success'):
                         coin_result = resolve_result.get('coin_result')
                         winner_id = resolve_result.get('winner_id')
+                        loser_id = resolve_result.get('loser_id')
                         winner_choice = resolve_result.get('winner_choice')
                         loser_choice = resolve_result.get('loser_choice')
+                        winner_color = resolve_result.get('winner_color', 1)
+                        loser_color = resolve_result.get('loser_color', 2)
                         
                         self.signals.message_received.emit(f"✓ 硬币结果: {coin_result}")
                         
                         is_my_win = winner_id == self.player_id
+                        
                         if is_my_win:
-                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！请选择执子颜色。")
-                            
-                            # 通过信号显示颜色选择对话框
-                            self.signals.show_color_choice.emit()
+                            # 我赢了，执黑棋
+                            self.my_color = winner_color  # 1 = 黑棋
+                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！您执黑棋（先手）。")
+                            self.signals.update_my_color.emit(self.my_color)
                         else:
-                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。等待对方选择颜色...")
-                            
-                            # 通过信号启动等待计时器
-                            self.signals.start_waiting_timer.emit()
+                            # 我输了，执白棋
+                            self.my_color = loser_color  # 2 = 白棋
+                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。您执白棋（后手）。")
+                            self.signals.update_my_color.emit(self.my_color)
+                        
+                        # 游戏正式开始
+                        self.signals.message_received.emit("✓ 游戏开始！黑棋先下。")
+                        
+                        # 停止等待计时器
+                        self.signals.stop_waiting_timer.emit()
+                        
+                        # 更新游戏状态
+                        self.signals.update_game_phase.emit("playing")
+                        
+                        # 启用游戏控件
+                        self.signals.enable_game_controls.emit()
+                        
+                        # 启动游戏计时器（从黑棋开始）
+                        self.signals.start_game_timer.emit(1)
+                        
+                        # 更新回合显示
+                        self.update_turn_display()
                     else:
                         self.signals.error_occurred.emit(f"解析硬币结果失败: {resolve_result.get('message', '未知错误')}")
                 else:
@@ -1741,15 +1763,28 @@ class MainWindow(QMainWindow):
             
             if success and result.get('success'):
                 room = result.get('room', {})
-                player1 = room.get('player1')
-                player2 = room.get('player2')
                 
                 # 找到另一个玩家
                 other_player_id = None
-                if player1 and player1 != self.player_id:
-                    other_player_id = player1
-                elif player2 and player2 != self.player_id:
-                    other_player_id = player2
+                
+                # 优先使用 challenger_id 和 challenged_id（新字段）
+                challenger_id = room.get('challenger_id')
+                challenged_id = room.get('challenged_id')
+                
+                if challenger_id and challenged_id:
+                    if self.player_id == challenger_id:
+                        other_player_id = challenged_id
+                    elif self.player_id == challenged_id:
+                        other_player_id = challenger_id
+                else:
+                    # 向后兼容：使用 player1 和 player2
+                    player1 = room.get('player1')
+                    player2 = room.get('player2')
+                    
+                    if player1 and player1 != self.player_id:
+                        other_player_id = player1
+                    elif player2 and player2 != self.player_id:
+                        other_player_id = player2
                 
                 if other_player_id:
                     # 确定颜色
@@ -1916,6 +1951,7 @@ class MainWindow(QMainWindow):
                     
                     if success and result.get('success'):
                         challenges = result.get('challenges', [])
+                        
                         # 检查是否有新的待处理挑战
                         pending = [c for c in challenges 
                                   if c.get('status') == 'pending' 
@@ -1924,6 +1960,26 @@ class MainWindow(QMainWindow):
                             self.signals.message_received.emit(
                                 f"📢 您收到了 {len(pending)} 个新挑战！"
                             )
+                        
+                        # 检查我发起的挑战是否已被接受
+                        if not self.current_room_id:
+                            accepted = [c for c in challenges
+                                      if c.get('status') == 'accepted'
+                                      and c.get('is_my_challenge')
+                                      and c.get('room_id')]
+                            if accepted:
+                                # 挑战已被接受，获取room_id
+                                challenge = accepted[0]
+                                room_id = challenge.get('room_id')
+                                self.current_room_id = room_id
+                                
+                                self.signals.message_received.emit("✓ 您的挑战已被接受！")
+                                self.signals.message_received.emit(f"  房间ID: {room_id}")
+                                self.signals.message_received.emit("进入抛硬币阶段，请选择硬币结果")
+                                
+                                # 启用硬币按钮
+                                self.signals.enable_coin_button.emit()
+                                self.signals.update_game_phase.emit("coin_toss")
                 
                 time.sleep(2)  # 每2秒轮询一次
                 
@@ -2013,6 +2069,7 @@ class MainWindow(QMainWindow):
             else:
                 self.turn_label.setText(f"当前: {current_name}的回合")
                 self.turn_label.setStyleSheet("color: #4a90d9; font-weight: bold;")
+                self.board.set_click_enabled(False)  # 禁用棋盘点击
                 
     def on_game_over(self, winner):
         """游戏结束"""

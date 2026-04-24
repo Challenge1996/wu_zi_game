@@ -94,6 +94,8 @@ def get_room_info(room_id, player_id=None):
         'id': room['id'],
         'name': room['name'],
         'creator': room['creator'],
+        'challenger_id': room.get('challenger_id'),  # 挑战者ID
+        'challenged_id': room.get('challenged_id'),  # 被挑战者ID
         'player1': room['player1'],
         'player2': room['player2'],
         'player1_name': players[room['player1']]['name'] if room['player1'] in players else None,
@@ -358,6 +360,7 @@ def list_challenges():
                 'challenged': challenge['challenged'],
                 'challenged_name': players[challenge['challenged']]['name'] if challenge['challenged'] in players else None,
                 'status': challenge['status'],
+                'room_id': challenge.get('room_id'),  # 添加room_id
                 'created_at': challenge['created_at'],
                 'expires_at': challenge['expires_at'],
                 'is_my_challenge': challenge['challenger'] == player_id
@@ -410,12 +413,17 @@ def accept_challenge():
     challenger_name = players[challenge['challenger']]['name']
     challenged_name = players[player_id]['name']
     
+    # 保存room_id到挑战对象
+    challenge['room_id'] = room_id
+    
     rooms[room_id] = {
         'id': room_id,
         'name': f"{challenger_name} vs {challenged_name}",
         'creator': challenge['challenger'],
-        'player1': None,  # 抛硬币后确定
-        'player2': None,
+        'challenger_id': challenge['challenger'],  # 挑战者ID
+        'challenged_id': player_id,  # 被挑战者ID
+        'player1': None,  # 抛硬币后确定（黑棋玩家）
+        'player2': None,  # 抛硬币后确定（白棋玩家）
         'status': 'coin_toss',
         'game': WuziqiGame(),
         'created_at': get_timestamp(),
@@ -426,6 +434,12 @@ def accept_challenge():
     
     # 初始化游戏的抛硬币阶段
     game = rooms[room_id]['game']
+    
+    # 设置游戏中的玩家ID（临时分配，抛硬币后会重新分配）
+    # 这样 player_make_choice 方法可以正确找到另一个玩家
+    game.players[1] = challenge['challenger']
+    game.players[2] = player_id
+    
     game.start_coin_toss()
     
     # 更新玩家状态
@@ -597,6 +611,14 @@ def resolve_coin_toss_api():
     if isinstance(result, tuple):
         success, data = result
         if success and isinstance(data, dict):
+            # 更新房间状态
+            room['status'] = 'playing'
+            room['started_at'] = get_timestamp()
+            room['player1'] = data.get('winner_id')  # 黑棋
+            room['player2'] = data.get('loser_id')   # 白棋
+            
+            # 更新玩家状态（如果游戏结束需要恢复，现在先不改变）
+            
             return jsonify({
                 "success": True,
                 **data
