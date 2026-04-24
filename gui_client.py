@@ -1741,15 +1741,28 @@ class MainWindow(QMainWindow):
             
             if success and result.get('success'):
                 room = result.get('room', {})
-                player1 = room.get('player1')
-                player2 = room.get('player2')
                 
                 # 找到另一个玩家
                 other_player_id = None
-                if player1 and player1 != self.player_id:
-                    other_player_id = player1
-                elif player2 and player2 != self.player_id:
-                    other_player_id = player2
+                
+                # 优先使用 challenger_id 和 challenged_id（新字段）
+                challenger_id = room.get('challenger_id')
+                challenged_id = room.get('challenged_id')
+                
+                if challenger_id and challenged_id:
+                    if self.player_id == challenger_id:
+                        other_player_id = challenged_id
+                    elif self.player_id == challenged_id:
+                        other_player_id = challenger_id
+                else:
+                    # 向后兼容：使用 player1 和 player2
+                    player1 = room.get('player1')
+                    player2 = room.get('player2')
+                    
+                    if player1 and player1 != self.player_id:
+                        other_player_id = player1
+                    elif player2 and player2 != self.player_id:
+                        other_player_id = player2
                 
                 if other_player_id:
                     # 确定颜色
