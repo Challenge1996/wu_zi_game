@@ -900,6 +900,11 @@ class MainWindow(QMainWindow):
         # 信号对象
         self.signals = GameSignals()
         
+        # 弹窗状态跟踪（避免重复弹窗）
+        self.shown_undo_request_id = None  # 已显示的悔棋请求ID
+        self.game_over_shown = False  # 游戏结束弹窗是否已显示
+        self.pending_undo_request_id = None  # 当前待处理的悔棋请求ID
+        
         # 轮询线程
         self.polling_thread = None
         self.running = False
@@ -1679,6 +1684,11 @@ class MainWindow(QMainWindow):
         self.coin_btn.setEnabled(True)
         self.undo_btn.setEnabled(False)
         self.reset_btn.setEnabled(False)
+        # 重置游戏结束弹窗状态
+        self.game_over_shown = False
+        # 重置悔棋请求相关状态
+        self.shown_undo_request_id = None
+        self.pending_undo_request_id = None
     
     def _enable_game_controls(self):
         """启用游戏控件（主线程）"""
@@ -2102,6 +2112,11 @@ class MainWindow(QMainWindow):
                 self.undo_btn.setEnabled(True)
                 self.reset_btn.setEnabled(True)
                 self.coin_btn.setEnabled(False)
+                # 游戏开始时重置游戏结束弹窗状态
+                self.game_over_shown = False
+                # 重置悔棋请求相关状态
+                self.shown_undo_request_id = None
+                self.pending_undo_request_id = None
                 
                 # 如果计时器还没开始，开始计时
                 if not self.timer_widget.is_running:
@@ -2119,9 +2134,10 @@ class MainWindow(QMainWindow):
         # 更新回合显示
         self.update_turn_display()
         
-        # 检查游戏是否结束
-        if game_state.get('game_over'):
+        # 检查游戏是否结束（只弹窗一次）
+        if game_state.get('game_over') and not self.game_over_shown:
             winner = game_state.get('winner')
+            self.game_over_shown = True  # 标记已显示游戏结束弹窗
             self.signals.game_over.emit(winner)
             
         # 更新我的颜色
@@ -2140,9 +2156,34 @@ class MainWindow(QMainWindow):
             is_requested_to_me = undo_request.get('is_requested_to_me', False)
             is_my_request = undo_request.get('is_my_request', False)
             status = undo_request.get('status')
+            undo_request_id = undo_request.get('id')
             
+            # 我是被请求方，且请求状态为 pending
             if is_requested_to_me and status == 'pending':
-                self.signals.undo_request_received.emit(undo_request)
+                # 只有当请求ID与已显示的不同时才触发弹窗（避免重复弹窗）
+                if undo_request_id != self.shown_undo_request_id:
+                    self.shown_undo_request_id = undo_request_id
+                    self.pending_undo_request_id = undo_request_id
+                    self.signals.undo_request_received.emit(undo_request)
+            
+            # 我是发起方，检查请求状态变化
+            elif is_my_request:
+                # 如果请求已被处理（accepted/declined/expired），且之前是 pending 状态
+                if status in ['accepted', 'declined', 'expired']:
+                    if self.pending_undo_request_id == undo_request_id:
+                        # 重置待处理请求状态
+                        self.pending_undo_request_id = None
+                        # 触发对应信号
+                        if status == 'accepted':
+                            self.signals.undo_request_accepted.emit(undo_request)
+                        elif status == 'declined':
+                            self.signals.undo_request_declined.emit(undo_request)
+                        elif status == 'expired':
+                            self.signals.undo_request_expired.emit(undo_request)
+        
+        # 如果没有悔棋请求了，重置已显示的请求ID
+        else:
+            self.shown_undo_request_id = None
                     
     def update_turn_display(self):
         """更新回合显示"""
