@@ -464,8 +464,35 @@ class WuziqiClient:
             print(f"✗ 落子失败: {result.get('message', '未知错误')}")
             return False
 
-    def undo_move(self, room_id=None):
-        """悔棋"""
+    def request_undo(self, room_id=None):
+        """发起悔棋请求（需要对手同意）"""
+        room_to_use = room_id or self.current_room_id
+        if not room_to_use:
+            print("✗ 没有指定房间ID")
+            return False
+        
+        if not self.player_id:
+            print("✗ 请先注册玩家")
+            return False
+        
+        print("正在向对手发起悔棋请求...")
+        
+        data = {
+            'player_id': self.player_id,
+            'room_id': room_to_use
+        }
+        
+        success, result = self._request('POST', '/api/game/undo/request', data)
+        if success and result.get('success'):
+            print(f"✓ {result.get('message')}")
+            print("  请等待对手回应...")
+            return True
+        else:
+            print(f"✗ 发起悔棋请求失败: {result.get('message', '未知错误')}")
+            return False
+    
+    def respond_undo(self, accept, room_id=None):
+        """响应悔棋请求"""
         room_to_use = room_id or self.current_room_id
         if not room_to_use:
             print("✗ 没有指定房间ID")
@@ -477,16 +504,78 @@ class WuziqiClient:
         
         data = {
             'player_id': self.player_id,
-            'room_id': room_to_use
+            'room_id': room_to_use,
+            'accept': accept
         }
         
-        success, result = self._request('POST', '/api/game/undo', data)
+        action = "同意" if accept else "拒绝"
+        print(f"正在{action}悔棋请求...")
+        
+        success, result = self._request('POST', '/api/game/undo/respond', data)
         if success and result.get('success'):
-            print(f"✓ {result.get('message')}")
+            undo_accepted = result.get('undo_accepted', False)
+            if undo_accepted:
+                print(f"✓ 已同意悔棋请求")
+                print(f"✓ {result.get('message')}")
+            else:
+                print(f"✓ 已拒绝悔棋请求")
             return True
         else:
-            print(f"✗ 悔棋失败: {result.get('message', '未知错误')}")
+            print(f"✗ 响应悔棋请求失败: {result.get('message', '未知错误')}")
             return False
+    
+    def get_undo_status(self, room_id=None):
+        """获取悔棋请求状态"""
+        room_to_use = room_id or self.current_room_id
+        if not room_to_use:
+            print("✗ 没有指定房间ID")
+            return None
+        
+        params = {
+            'room_id': room_to_use,
+            'player_id': self.player_id
+        }
+        
+        success, result = self._request('GET', '/api/game/undo/status', params=params)
+        if success and result.get('success'):
+            return result
+        else:
+            print(f"✗ 获取悔棋状态失败: {result.get('message', '未知错误')}")
+            return None
+    
+    def check_pending_undo_requests(self, room_id=None):
+        """检查是否有待处理的悔棋请求"""
+        room_to_use = room_id or self.current_room_id
+        if not room_to_use:
+            return False
+        
+        status = self.get_undo_status(room_to_use)
+        if status and status.get('has_pending_request'):
+            undo_request = status.get('undo_request', {})
+            is_requested_to_me = undo_request.get('is_requested_to_me', False)
+            
+            if is_requested_to_me:
+                requester_name = undo_request.get('requester_name', '对手')
+                print(f"\n📢 {requester_name} 向您请求悔棋！")
+                print("请选择：")
+                print("  1. 同意悔棋")
+                print("  2. 拒绝悔棋")
+                
+                choice = input("请输入选项 (1/2): ").strip()
+                if choice == '1':
+                    self.respond_undo(True, room_to_use)
+                    return True
+                elif choice == '2':
+                    self.respond_undo(False, room_to_use)
+                    return True
+        
+        return False
+    
+    def undo_move(self, room_id=None):
+        """悔棋（已废弃，使用 request_undo 代替）"""
+        print("⚠️  直接悔棋功能已废弃，现在需要对手同意才能悔棋。")
+        print("  请使用 '发起悔棋请求' 功能。")
+        return self.request_undo(room_id)
 
     def reset_game(self, room_id=None):
         """重置游戏"""
@@ -562,9 +651,10 @@ def print_main_menu():
     print("  11. 解决抛硬币结果")
     print("  12. 选择执子颜色")
     print("  13. 落子")
-    print("  14. 悔棋")
-    print("  15. 重置游戏")
-    print("  16. 快速开始（跳过抛硬币）")
+    print("  14. 发起悔棋请求")
+    print("  15. 查看悔棋请求状态")
+    print("  16. 重置游戏")
+    print("  17. 快速开始（跳过抛硬币）")
     
     print("\n【其他】")
     print("  0. 退出")
@@ -602,7 +692,7 @@ def main():
         if client.current_room_id:
             print(f"当前房间: {client.current_room_id}")
         
-        choice = input("\n请选择操作 (0-16): ").strip()
+        choice = input("\n请选择操作 (0-17): ").strip()
         
         # 系统操作
         if choice == '0':
@@ -770,12 +860,32 @@ def main():
                 print("✗ 您当前没有加入任何房间")
                 continue
             
-            if client.undo_move():
-                room_info = client.get_room_info()
-                if room_info:
-                    client.display_room_info(room_info)
+            if client.request_undo():
+                print("  请等待对手回应...")
         
         elif choice == '15':
+            if not client.current_room_id:
+                print("✗ 您当前没有加入任何房间")
+                continue
+            
+            status = client.get_undo_status()
+            if status:
+                has_pending = status.get('has_pending_request', False)
+                if has_pending:
+                    req = status.get('undo_request', {})
+                    print(f"\n悔棋请求状态:")
+                    print(f"  发起者: {req.get('requester_name', '未知')}")
+                    print(f"  状态: {req.get('status', 'unknown')}")
+                    print(f"  是否是我发起的: {'是' if req.get('is_my_request', False) else '否'}")
+                    print(f"  是否发给我的: {'是' if req.get('is_requested_to_me', False) else '否'}")
+                    
+                    if req.get('is_requested_to_me', False) and req.get('status') == 'pending':
+                        print("\n对手正在等待您的回应...")
+                        client.check_pending_undo_requests()
+                else:
+                    print("\n当前没有待处理的悔棋请求")
+        
+        elif choice == '16':
             if not client.current_room_id:
                 print("✗ 您当前没有加入任何房间")
                 continue
@@ -785,7 +895,7 @@ def main():
                 client.reset_game()
                 print("游戏已重置")
         
-        elif choice == '16':
+        elif choice == '17':
             if not client.player_id:
                 print("✗ 请先注册玩家（选项2）")
                 continue
