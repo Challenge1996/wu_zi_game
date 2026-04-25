@@ -86,6 +86,13 @@ class GameSignals(QObject):
     update_my_color = pyqtSignal(int)  # 更新我的颜色显示 (1=黑, 2=白)
     enable_game_controls = pyqtSignal()  # 启用游戏控件
     disable_game_controls = pyqtSignal()  # 禁用游戏控件
+    
+    # 悔棋请求相关信号
+    undo_request_received = pyqtSignal(dict)  # 收到悔棋请求
+    undo_request_accepted = pyqtSignal(dict)  # 悔棋请求被接受
+    undo_request_declined = pyqtSignal(dict)  # 悔棋请求被拒绝
+    undo_request_expired = pyqtSignal(dict)  # 悔棋请求过期
+    show_undo_request_dialog = pyqtSignal(dict)  # 显示悔棋请求对话框
 
 # ==================== 棋盘控件 ====================
 
@@ -1197,6 +1204,13 @@ class MainWindow(QMainWindow):
         self.signals.enable_game_controls.connect(self._enable_game_controls)
         self.signals.disable_game_controls.connect(self._disable_game_controls)
         
+        # 悔棋请求相关信号
+        self.signals.undo_request_received.connect(self.on_undo_request_received)
+        self.signals.undo_request_accepted.connect(self.on_undo_request_accepted)
+        self.signals.undo_request_declined.connect(self.on_undo_request_declined)
+        self.signals.undo_request_expired.connect(self.on_undo_request_expired)
+        self.signals.show_undo_request_dialog.connect(self._show_undo_request_dialog)
+        
     # ==================== 网络请求方法 ====================
     
     def _request(self, method, endpoint, data=None, params=None):
@@ -1511,22 +1525,44 @@ class MainWindow(QMainWindow):
                     if resolve_success and resolve_result.get('success'):
                         coin_result = resolve_result.get('coin_result')
                         winner_id = resolve_result.get('winner_id')
+                        loser_id = resolve_result.get('loser_id')
                         winner_choice = resolve_result.get('winner_choice')
                         loser_choice = resolve_result.get('loser_choice')
+                        winner_color = resolve_result.get('winner_color', 1)
+                        loser_color = resolve_result.get('loser_color', 2)
                         
                         self.signals.message_received.emit(f"✓ 硬币结果: {coin_result}")
                         
                         is_my_win = winner_id == self.player_id
+                        
                         if is_my_win:
-                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！请选择执子颜色。")
-                            
-                            # 通过信号显示颜色选择对话框
-                            self.signals.show_color_choice.emit()
+                            # 我赢了，执黑棋
+                            self.my_color = winner_color  # 1 = 黑棋
+                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！您执黑棋（先手）。")
+                            self.signals.update_my_color.emit(self.my_color)
                         else:
-                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。等待对方选择颜色...")
-                            
-                            # 通过信号启动等待计时器
-                            self.signals.start_waiting_timer.emit()
+                            # 我输了，执白棋
+                            self.my_color = loser_color  # 2 = 白棋
+                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。您执白棋（后手）。")
+                            self.signals.update_my_color.emit(self.my_color)
+                        
+                        # 游戏正式开始
+                        self.signals.message_received.emit("✓ 游戏开始！黑棋先下。")
+                        
+                        # 停止等待计时器
+                        self.signals.stop_waiting_timer.emit()
+                        
+                        # 更新游戏状态
+                        self.signals.update_game_phase.emit("playing")
+                        
+                        # 启用游戏控件
+                        self.signals.enable_game_controls.emit()
+                        
+                        # 启动游戏计时器（从黑棋开始）
+                        self.signals.start_game_timer.emit(1)
+                        
+                        # 更新回合显示
+                        self.update_turn_display()
                     else:
                         self.signals.error_occurred.emit(f"解析硬币结果失败: {resolve_result.get('message', '未知错误')}")
                 else:
@@ -1657,6 +1693,77 @@ class MainWindow(QMainWindow):
         self.undo_btn.setEnabled(False)
         self.reset_btn.setEnabled(False)
     
+    # ==================== 悔棋请求相关槽函数 ====================
+    
+    def on_undo_request_received(self, undo_request):
+        """收到悔棋请求"""
+        requester_name = undo_request.get('requester_name', '对手')
+        self.append_log(f"📢 {requester_name} 向您请求悔棋！")
+        
+        self.signals.show_undo_request_dialog.emit(undo_request)
+    
+    def on_undo_request_accepted(self, data):
+        """悔棋请求被接受"""
+        self.append_log("✓ 悔棋成功！对手已同意悔棋。")
+        
+        game_state = data.get('game_state', {})
+        if game_state:
+            self.signals.room_updated.emit({'game_state': game_state})
+        
+        self.signals.enable_undo_button.emit()
+        self.signals.enable_reset_button.emit()
+    
+    def on_undo_request_declined(self, data):
+        """悔棋请求被拒绝"""
+        self.append_log("✗ 对手拒绝了您的悔棋请求。")
+        self.signals.enable_undo_button.emit()
+        self.signals.enable_reset_button.emit()
+    
+    def on_undo_request_expired(self, data):
+        """悔棋请求过期"""
+        self.append_log("⏰ 悔棋请求已过期，对手未回应。")
+        self.signals.enable_undo_button.emit()
+        self.signals.enable_reset_button.emit()
+    
+    def _show_undo_request_dialog(self, undo_request):
+        """显示悔棋请求对话框（主线程）"""
+        dialog = UndoRequestDialog(undo_request, self)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            accept = dialog.get_result()
+            if accept is not None:
+                self.respond_undo_request(accept, undo_request.get('id'))
+    
+    def respond_undo_request(self, accept, undo_request_id=None):
+        """响应悔棋请求"""
+        self.append_log(f"正在{'同意' if accept else '拒绝'}悔棋请求...")
+        
+        def do_respond():
+            data = {
+                'player_id': self.player_id,
+                'room_id': self.current_room_id,
+                'accept': accept
+            }
+            
+            success, result = self._request('POST', '/api/game/undo/respond', data)
+            
+            if success and result.get('success'):
+                undo_accepted = result.get('undo_accepted', False)
+                
+                if undo_accepted:
+                    self.signals.message_received.emit("✓ 已同意悔棋请求")
+                    
+                    game_state = result.get('game_state', {})
+                    if game_state:
+                        self.signals.room_updated.emit({'game_state': game_state})
+                else:
+                    self.signals.message_received.emit("✓ 已拒绝悔棋请求")
+            else:
+                self.signals.error_occurred.emit(f"响应悔棋请求失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_respond, daemon=True)
+        thread.start()
+    
     def show_players_for_challenge(self, players):
         """显示可挑战的玩家列表（主线程）"""
         self._show_player_list_dialog(players)
@@ -1741,15 +1848,28 @@ class MainWindow(QMainWindow):
             
             if success and result.get('success'):
                 room = result.get('room', {})
-                player1 = room.get('player1')
-                player2 = room.get('player2')
                 
                 # 找到另一个玩家
                 other_player_id = None
-                if player1 and player1 != self.player_id:
-                    other_player_id = player1
-                elif player2 and player2 != self.player_id:
-                    other_player_id = player2
+                
+                # 优先使用 challenger_id 和 challenged_id（新字段）
+                challenger_id = room.get('challenger_id')
+                challenged_id = room.get('challenged_id')
+                
+                if challenger_id and challenged_id:
+                    if self.player_id == challenger_id:
+                        other_player_id = challenged_id
+                    elif self.player_id == challenged_id:
+                        other_player_id = challenger_id
+                else:
+                    # 向后兼容：使用 player1 和 player2
+                    player1 = room.get('player1')
+                    player2 = room.get('player2')
+                    
+                    if player1 and player1 != self.player_id:
+                        other_player_id = player1
+                    elif player2 and player2 != self.player_id:
+                        other_player_id = player2
                 
                 if other_player_id:
                     # 确定颜色
@@ -1813,30 +1933,39 @@ class MainWindow(QMainWindow):
         thread.start()
         
     def request_undo(self):
-        """请求悔棋"""
+        """请求悔棋（发起悔棋请求，需要对手同意）"""
         if not self.current_room_id:
             QMessageBox.warning(self, "提示", "当前没有游戏！")
             return
-            
-        self.append_log("正在请求悔棋...")
         
-        def do_undo():
+        reply = QMessageBox.question(
+            self, "确认悔棋",
+            "确定要向对手发起悔棋请求吗？\n对手需要同意才能悔棋。",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+            
+        self.append_log("正在向对手发起悔棋请求...")
+        
+        def do_request_undo():
             data = {
                 'player_id': self.player_id,
                 'room_id': self.current_room_id
             }
             
-            success, result = self._request('POST', '/api/game/undo', data)
+            success, result = self._request('POST', '/api/game/undo/request', data)
             if success and result.get('success'):
-                self.signals.message_received.emit("✓ 悔棋成功")
+                self.signals.message_received.emit("✓ 悔棋请求已发送，等待对手同意...")
+                self.signals.message_received.emit("请等待对手回应...")
                 
-                # 更新游戏状态
-                game_state = result.get('game_state', {})
-                self.signals.room_updated.emit({'game_state': game_state})
+                self.signals.disable_undo_button.emit()
+                self.signals.disable_reset_button.emit()
             else:
-                self.signals.error_occurred.emit(f"悔棋失败: {result.get('message', '未知错误')}")
+                self.signals.error_occurred.emit(f"发起悔棋请求失败: {result.get('message', '未知错误')}")
         
-        thread = threading.Thread(target=do_undo, daemon=True)
+        thread = threading.Thread(target=do_request_undo, daemon=True)
         thread.start()
         
     def request_reset(self):
@@ -1916,6 +2045,7 @@ class MainWindow(QMainWindow):
                     
                     if success and result.get('success'):
                         challenges = result.get('challenges', [])
+                        
                         # 检查是否有新的待处理挑战
                         pending = [c for c in challenges 
                                   if c.get('status') == 'pending' 
@@ -1924,6 +2054,26 @@ class MainWindow(QMainWindow):
                             self.signals.message_received.emit(
                                 f"📢 您收到了 {len(pending)} 个新挑战！"
                             )
+                        
+                        # 检查我发起的挑战是否已被接受
+                        if not self.current_room_id:
+                            accepted = [c for c in challenges
+                                      if c.get('status') == 'accepted'
+                                      and c.get('is_my_challenge')
+                                      and c.get('room_id')]
+                            if accepted:
+                                # 挑战已被接受，获取room_id
+                                challenge = accepted[0]
+                                room_id = challenge.get('room_id')
+                                self.current_room_id = room_id
+                                
+                                self.signals.message_received.emit("✓ 您的挑战已被接受！")
+                                self.signals.message_received.emit(f"  房间ID: {room_id}")
+                                self.signals.message_received.emit("进入抛硬币阶段，请选择硬币结果")
+                                
+                                # 启用硬币按钮
+                                self.signals.enable_coin_button.emit()
+                                self.signals.update_game_phase.emit("coin_toss")
                 
                 time.sleep(2)  # 每2秒轮询一次
                 
@@ -1983,6 +2133,16 @@ class MainWindow(QMainWindow):
                     self.my_color_label.setText("⚫ 执黑棋")
                 else:
                     self.my_color_label.setText("⚪ 执白棋")
+        
+        # 处理悔棋请求
+        undo_request = room.get('undo_request')
+        if undo_request:
+            is_requested_to_me = undo_request.get('is_requested_to_me', False)
+            is_my_request = undo_request.get('is_my_request', False)
+            status = undo_request.get('status')
+            
+            if is_requested_to_me and status == 'pending':
+                self.signals.undo_request_received.emit(undo_request)
                     
     def update_turn_display(self):
         """更新回合显示"""
@@ -2013,6 +2173,7 @@ class MainWindow(QMainWindow):
             else:
                 self.turn_label.setText(f"当前: {current_name}的回合")
                 self.turn_label.setStyleSheet("color: #4a90d9; font-weight: bold;")
+                self.board.set_click_enabled(False)  # 禁用棋盘点击
                 
     def on_game_over(self, winner):
         """游戏结束"""
@@ -2080,6 +2241,120 @@ class MainWindow(QMainWindow):
                 pass
         
         event.accept()
+
+
+# ==================== 悔棋请求对话框 ====================
+
+class UndoRequestDialog(QDialog):
+    """悔棋请求对话框 - 显示对手的悔棋请求，让用户选择同意或拒绝"""
+    
+    def __init__(self, undo_request, parent=None):
+        super().__init__(parent)
+        self.undo_request = undo_request
+        self.result_accept = None
+        self.init_ui()
+        
+    def init_ui(self):
+        """初始化UI"""
+        self.setWindowTitle("悔棋请求")
+        self.setMinimumSize(400, 250)
+        self.setModal(True)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f5f5f5;
+            }
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #ff9800;
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 12px;
+            }
+            QPushButton {
+                border: none;
+                padding: 10px 25px;
+                border-radius: 5px;
+                font-weight: bold;
+                font-size: 14px;
+                min-width: 100px;
+            }
+            QPushButton:hover {
+                opacity: 0.8;
+            }
+        """)
+        
+        layout = QVBoxLayout(self)
+        
+        # 标题
+        title_label = QLabel("🤔 悔棋请求")
+        title_label.setFont(QFont("Arial", 16, QFont.Bold))
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+        
+        # 说明
+        requester_name = self.undo_request.get('requester_name', '对手')
+        desc_label = QLabel(f"<b>{requester_name}</b> 向您请求悔棋")
+        desc_label.setAlignment(Qt.AlignCenter)
+        desc_label.setWordWrap(True)
+        layout.addWidget(desc_label)
+        
+        # 提示
+        hint_label = QLabel("请选择是否同意悔棋：")
+        hint_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(hint_label)
+        
+        # 按钮区域
+        btn_layout = QHBoxLayout()
+        
+        # 同意按钮
+        self.accept_btn = QPushButton("✓ 同意悔棋")
+        self.accept_btn.setMinimumSize(120, 50)
+        self.accept_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4caf50;
+                color: white;
+            }
+            QPushButton:hover {
+                background-color: #388e3c;
+            }
+        """)
+        self.accept_btn.clicked.connect(self.on_accept)
+        
+        # 拒绝按钮
+        self.decline_btn = QPushButton("✗ 拒绝悔棋")
+        self.decline_btn.setMinimumSize(120, 50)
+        self.decline_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+            }
+            QPushButton:hover {
+                background-color: #d32f2f;
+            }
+        """)
+        self.decline_btn.clicked.connect(self.on_decline)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.accept_btn)
+        btn_layout.addSpacing(20)
+        btn_layout.addWidget(self.decline_btn)
+        btn_layout.addStretch()
+        
+        layout.addLayout(btn_layout)
+        
+    def on_accept(self):
+        """同意悔棋"""
+        self.result_accept = True
+        self.accept()
+        
+    def on_decline(self):
+        """拒绝悔棋"""
+        self.result_accept = False
+        self.accept()
+        
+    def get_result(self):
+        """获取结果"""
+        return self.result_accept
 
 
 # ==================== 挑战列表对话框 ====================
