@@ -203,7 +203,7 @@ class WuziqiGame:
         return True, f"玩家 {player_id} 猜测：{choice_name}"
 
     def resolve_coin_toss(self):
-        """解决抛硬币结果"""
+        """解决抛硬币结果，直接分配颜色（赢家执黑，输家执白）"""
         if self.game_phase != "coin_toss":
             return False, "不在抛硬币阶段"
         
@@ -233,31 +233,34 @@ class WuziqiGame:
         player_ids = list(self.player_choices.keys())
         player1_id, player2_id = player_ids[0], player_ids[1]
         
-        # 检查谁猜对了
-        player1_choice = self.player_choices[player1_id]
-        player2_choice = self.player_choices[player2_id]
-        
-        # 简化逻辑：硬币结果就是先选择的玩家的选择
-        # 这样先选的玩家"猜对"，可以选择颜色
-        # 或者：随机选择一个赢家（更公平）
-        
-        # 方案：如果玩家选择不同，选择猜正面的玩家优先
-        # 或者直接随机决定赢家（更简单）
-        
-        # 让我们使用一个简单的公平方式：随机选择赢家
+        # 随机选择一个赢家（公平方式）
         winner_id = random.choice(player_ids)
+        loser_id = player2_id if winner_id == player1_id else player1_id
         
         # 记录硬币结果（赢家的选择）
         self.coin_result = self.player_choices[winner_id]
         
-        # 猜对的玩家可以选择执黑棋或白棋
+        # 直接分配颜色：赢家执黑（1），输家执白（2）
+        self.players[1] = winner_id  # 黑棋
+        self.players[2] = loser_id   # 白棋
+        
+        # 重置当前玩家为黑棋（1），确保黑棋先手
+        self.current_player = 1
+        
+        # 进入游戏阶段
+        self.game_phase = "playing"
+        self.start_time = time.time()
+        
+        # 返回结果
         return True, {
             "winner_id": winner_id,
+            "loser_id": loser_id,
             "coin_result": "正面" if self.coin_result == 0 else "反面",
             "winner_choice": "正面" if self.coin_result == 0 else "反面",
-            "loser_id": player2_id if winner_id == player1_id else player1_id,
-            "loser_choice": "正面" if self.player_choices[player2_id if winner_id == player1_id else player1_id] == 0 else "反面",
-            "message": f"玩家 {winner_id} 赢得猜先！硬币结果是{'正面' if self.coin_result == 0 else '反面'}。请选择执黑棋或白棋。"
+            "loser_choice": "正面" if self.player_choices[loser_id] == 0 else "反面",
+            "winner_color": 1,  # 黑棋
+            "loser_color": 2,   # 白棋
+            "message": f"玩家 {winner_id} 赢得猜先！硬币结果是{'正面' if self.coin_result == 0 else '反面'}。赢家执黑棋，输家执白棋。游戏开始！"
         }
 
     def player_choose_color(self, player_id, color_choice):
@@ -270,7 +273,6 @@ class WuziqiGame:
         
         # 记录玩家选择
         self.players[color_choice] = player_id
-        self.players[3 - color_choice] = None  # 另一个颜色暂时设为None，等另一个玩家确认
         
         return True, f"玩家 {player_id} 选择了{'黑棋' if color_choice == 1 else '白棋'}"
 
@@ -291,6 +293,9 @@ class WuziqiGame:
         
         # 分配给第二个玩家
         self.players[unassigned_color] = player2_id
+        
+        # 重置当前玩家为黑棋（1），确保黑棋先手
+        self.current_player = 1
         
         # 进入游戏阶段
         self.game_phase = "playing"
