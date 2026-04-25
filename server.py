@@ -59,6 +59,21 @@ challenges = {}
 # 挑战过期时间（秒）
 CHALLENGE_EXPIRE_SECONDS = 60
 
+# 悔棋请求过期时间（秒）
+UNDO_REQUEST_EXPIRE_SECONDS = 30
+
+# 悔棋请求管理
+# undo_request_id -> {
+#     'id': undo_request_id,
+#     'room_id': room_id,
+#     'requester': player_id,    # 发起悔棋请求的玩家
+#     'requested': player_id,    # 被请求的玩家（对手）
+#     'status': 'pending'|'accepted'|'declined'|'expired',
+#     'created_at': timestamp,
+#     'expires_at': timestamp
+# }
+undo_requests = {}
+
 # ==================== 工具函数 ====================
 
 def get_timestamp():
@@ -90,6 +105,10 @@ def get_room_info(room_id, player_id=None):
     game = room['game']
     game_state = game.get_game_state(player_id)
     
+    # 获取悔棋请求状态
+    undo_request = get_room_undo_request(room_id)
+    undo_request_info = get_undo_request_info(undo_request, player_id)
+    
     return {
         'id': room['id'],
         'name': room['name'],
@@ -102,6 +121,7 @@ def get_room_info(room_id, player_id=None):
         'player2_name': players[room['player2']]['name'] if room['player2'] in players else None,
         'status': room['status'],
         'game_state': game_state,
+        'undo_request': undo_request_info,  # 添加悔棋请求状态
         'created_at': room['created_at'],
         'started_at': room['started_at'],
         'finished_at': room['finished_at'],
@@ -117,6 +137,51 @@ def cleanup_expired_challenges():
             challenge['status'] = 'expired'
             expired.append(cid)
     return expired
+
+def cleanup_expired_undo_requests():
+    """清理过期的悔棋请求"""
+    now = get_timestamp()
+    expired = []
+    for uid, req in undo_requests.items():
+        if req['status'] == 'pending' and now > req['expires_at']:
+            req['status'] = 'expired'
+            expired.append(uid)
+    return expired
+
+def get_room_undo_request(room_id):
+    """获取房间的悔棋请求状态"""
+    pending_requests = []
+    for uid, req in undo_requests.items():
+        if req['room_id'] == room_id and req['status'] == 'pending':
+            pending_requests.append(req)
+    
+    if not pending_requests:
+        return None
+    
+    return pending_requests[-1]
+
+def get_undo_request_info(req, player_id=None):
+    """获取悔棋请求信息"""
+    if req is None:
+        return None
+    
+    info = {
+        'id': req['id'],
+        'room_id': req['room_id'],
+        'requester': req['requester'],
+        'requester_name': players[req['requester']]['name'] if req['requester'] in players else None,
+        'requested': req['requested'],
+        'requested_name': players[req['requested']]['name'] if req['requested'] in players else None,
+        'status': req['status'],
+        'created_at': req['created_at'],
+        'expires_at': req['expires_at']
+    }
+    
+    if player_id is not None:
+        info['is_my_request'] = (req['requester'] == player_id)
+        info['is_requested_to_me'] = (req['requested'] == player_id)
+    
+    return info
 
 # ==================== API 接口 ====================
 
@@ -835,6 +900,196 @@ def undo_move_api():
         "game_state": state
     })
 
+@app.route('/api/game/undo/request', methods=['POST'])
+def request_undo_api():
+    """发起悔棋请求"""
+    cleanup_expired_undo_requests()
+    
+    data = request.get_json() or {}
+    player_id = data.get('player_id')
+    room_id = data.get('room_id')
+    
+    if not player_id or not room_id:
+        return jsonify({
+            "success": False,
+            "message": "缺少必要参数"
+        }), 400
+    
+    if room_id not in rooms:
+        return jsonify({
+            "success": False,
+            "message": "房间不存在"
+        }), 400
+    
+    room = rooms[room_id]
+    if room['status'] != 'playing':
+        return jsonify({
+            "success": False,
+            "message": "游戏未开始"
+        }), 400
+    
+    game = room['game']
+    move_history = game.move_history
+    
+    if len(move_history) == 0:
+        return jsonify({
+            "success": False,
+            "message": "没有可悔的棋"
+        }), 400
+    
+    existing_request = get_room_undo_request(room_id)
+    if existing_request:
+        if existing_request['requester'] == player_id:
+            return jsonify({
+                "success": False,
+                "message": "您已发起悔棋请求，请等待对手回应"
+            }), 400
+        else:
+            return jsonify({
+                "success": False,
+                "message": "对手已发起悔棋请求，请先处理"
+            }), 400
+    
+    player1 = room.get('player1')
+    player2 = room.get('player2')
+    
+    if player_id not in [player1, player2]:
+        return jsonify({
+            "success": False,
+            "message": "您不是该房间的玩家"
+        }), 400
+    
+    opponent_id = player2 if player_id == player1 else player1
+    
+    now = get_timestamp()
+    undo_request_id = generate_id()
+    
+    undo_requests[undo_request_id] = {
+        'id': undo_request_id,
+        'room_id': room_id,
+        'requester': player_id,
+        'requested': opponent_id,
+        'status': 'pending',
+        'created_at': now,
+        'expires_at': now + UNDO_REQUEST_EXPIRE_SECONDS
+    }
+    
+    requester_name = players[player_id]['name'] if player_id in players else '未知玩家'
+    
+    return jsonify({
+        "success": True,
+        "undo_request_id": undo_request_id,
+        "opponent_id": opponent_id,
+        "message": f"已向对手发起悔棋请求，等待 {requester_name} 同意"
+    })
+
+@app.route('/api/game/undo/respond', methods=['POST'])
+def respond_undo_api():
+    """响应悔棋请求（同意/拒绝）"""
+    cleanup_expired_undo_requests()
+    
+    data = request.get_json() or {}
+    player_id = data.get('player_id')
+    room_id = data.get('room_id')
+    accept = data.get('accept', False)
+    
+    if not player_id or not room_id:
+        return jsonify({
+            "success": False,
+            "message": "缺少必要参数"
+        }), 400
+    
+    if room_id not in rooms:
+        return jsonify({
+            "success": False,
+            "message": "房间不存在"
+        }), 400
+    
+    room = rooms[room_id]
+    
+    undo_request = get_room_undo_request(room_id)
+    
+    if not undo_request:
+        return jsonify({
+            "success": False,
+            "message": "没有待处理的悔棋请求"
+        }), 400
+    
+    if undo_request['requested'] != player_id:
+        return jsonify({
+            "success": False,
+            "message": "您不是被请求的玩家"
+        }), 400
+    
+    if accept:
+        undo_request['status'] = 'accepted'
+        
+        game = room['game']
+        was_finished = game.is_game_over()
+        
+        success, message = game.undo_move()
+        
+        if success and was_finished:
+            room['status'] = 'playing'
+            room['finished_at'] = None
+            room['winner'] = None
+        
+        state = game.get_game_state(player_id)
+        
+        return jsonify({
+            "success": success,
+            "message": message if success else "悔棋失败",
+            "undo_accepted": True,
+            "game_state": state
+        })
+    else:
+        undo_request['status'] = 'declined'
+        
+        game = room['game']
+        state = game.get_game_state(player_id)
+        
+        return jsonify({
+            "success": True,
+            "message": "已拒绝悔棋请求",
+            "undo_accepted": False,
+            "game_state": state
+        })
+
+@app.route('/api/game/undo/status', methods=['GET'])
+def get_undo_status_api():
+    """获取悔棋请求状态"""
+    cleanup_expired_undo_requests()
+    
+    room_id = request.args.get('room_id')
+    player_id = request.args.get('player_id')
+    
+    if not room_id:
+        return jsonify({
+            "success": False,
+            "message": "缺少必要参数"
+        }), 400
+    
+    if room_id not in rooms:
+        return jsonify({
+            "success": False,
+            "message": "房间不存在"
+        }), 400
+    
+    undo_request = get_room_undo_request(room_id)
+    
+    if undo_request:
+        return jsonify({
+            "success": True,
+            "has_pending_request": True,
+            "undo_request": get_undo_request_info(undo_request, player_id)
+        })
+    else:
+        return jsonify({
+            "success": True,
+            "has_pending_request": False,
+            "undo_request": None
+        })
+
 @app.route('/api/game/reset', methods=['POST'])
 def reset_game_api():
     """重置游戏接口"""
@@ -973,7 +1228,10 @@ def main():
     print("  POST /api/game/choose_color    选择执子颜色")
     print("  POST /api/game/finalize_colors 确定颜色并开始")
     print("  POST /api/game/place_piece     落子")
-    print("  POST /api/game/undo            悔棋")
+    print("  POST /api/game/undo            直接悔棋（用于测试，不推荐生产使用）")
+    print("  POST /api/game/undo/request    发起悔棋请求")
+    print("  POST /api/game/undo/respond    响应悔棋请求（同意/拒绝）")
+    print("  GET  /api/game/undo/status     获取悔棋请求状态")
     print("  POST /api/game/reset           重置游戏")
     print("  POST /api/game/quick_start     快速开始（跳过抛硬币）")
     print("\n【其他】")
