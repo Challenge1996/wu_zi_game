@@ -89,6 +89,7 @@ class WuziqiGame:
         if self.check_win(row, col, player):
             self.game_over = True
             self.winner = player
+            self.game_phase = "finished"
             return True, f"恭喜！玩家{'黑棋' if player == 1 else '白棋'}获胜！"
         
         # 切换玩家
@@ -116,6 +117,7 @@ class WuziqiGame:
         if self.game_over:
             self.game_over = False
             self.winner = None
+            self.game_phase = "playing"
         
         return True, f"已悔棋：行={row}, 列={col}, 玩家={'黑棋' if player == 1 else '白棋'}"
 

@@ -2103,8 +2103,16 @@ class MainWindow(QMainWindow):
             
         # 更新游戏阶段
         new_phase = game_state.get('game_phase', 'waiting')
+        old_phase = self.game_phase
+        
         if new_phase != self.game_phase:
             self.game_phase = new_phase
+            
+            # 当游戏阶段从 finished 变为非 finished 时，重置游戏结束弹窗状态
+            if old_phase == 'finished' and new_phase != 'finished':
+                self.game_over_shown = False
+                self.shown_undo_request_id = None
+                self.pending_undo_request_id = None
             
             if new_phase == 'playing':
                 self.status_label.setText("游戏状态: 游戏进行中")
@@ -2112,11 +2120,6 @@ class MainWindow(QMainWindow):
                 self.undo_btn.setEnabled(True)
                 self.reset_btn.setEnabled(True)
                 self.coin_btn.setEnabled(False)
-                # 游戏开始时重置游戏结束弹窗状态
-                self.game_over_shown = False
-                # 重置悔棋请求相关状态
-                self.shown_undo_request_id = None
-                self.pending_undo_request_id = None
                 
                 # 如果计时器还没开始，开始计时
                 if not self.timer_widget.is_running:
