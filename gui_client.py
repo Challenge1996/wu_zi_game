@@ -1608,7 +1608,9 @@ class MainWindow(QMainWindow):
     
     def on_chat_message_received(self, message):
         """收到聊天消息"""
-        self.append_chat_message(message)
+        if message.get('id') not in [m.get('id') for m in self.chat_messages]:
+            self.chat_messages.append(message)
+            self.append_chat_message(message)
     
     def on_chat_messages_updated(self, messages):
         """聊天消息列表更新"""
@@ -1631,28 +1633,30 @@ class MainWindow(QMainWindow):
         formatted_msg = ""
         
         if msg_type == 'system':
-            formatted_msg = f'<div style="color: #888888; font-style: italic; text-align: center; margin: 5px 0;">' \
-                           f'[{timestamp}] {content}</div>'
+            formatted_msg = f'<div style="color: #888888; font-style: italic; text-align: left; margin: 5px 0;">' \
+                           f'<span style="font-weight: bold;">[系统]</span> ' \
+                           f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
+                           f'&nbsp;&nbsp;{content}</div>'
         elif msg_type == 'move':
-            formatted_msg = f'<div style="color: #6666cc; margin: 3px 0;">' \
+            formatted_msg = f'<div style="color: #6666cc; margin: 3px 0; text-align: left;">' \
                            f'<span style="font-weight: bold;">[系统]</span> ' \
                            f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
                            f'&nbsp;&nbsp;{content}</div>'
         elif msg_type == 'undo':
-            formatted_msg = f'<div style="color: #cc6666; margin: 3px 0;">' \
+            formatted_msg = f'<div style="color: #cc6666; margin: 3px 0; text-align: left;">' \
                            f'<span style="font-weight: bold;">[系统]</span> ' \
                            f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
                            f'&nbsp;&nbsp;{content}</div>'
         elif msg_type == 'resign':
-            formatted_msg = f'<div style="color: #cc3333; margin: 3px 0;">' \
+            formatted_msg = f'<div style="color: #cc3333; margin: 3px 0; text-align: left;">' \
                            f'<span style="font-weight: bold;">[系统]</span> ' \
                            f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
                            f'&nbsp;&nbsp;{content}</div>'
         else:
             if is_my:
-                formatted_msg = f'<div style="text-align: right; margin: 5px 0;">' \
-                               f'<span style="color: #999999; font-size: 10px;">[{timestamp}]</span> ' \
-                               f'<span style="font-weight: bold; color: #4a90d9;">我</span><br/>' \
+                formatted_msg = f'<div style="text-align: left; margin: 5px 0;">' \
+                               f'<span style="font-weight: bold; color: #4a90d9;">我</span> ' \
+                               f'<span style="color: #999999; font-size: 10px;">[{timestamp}]</span><br/>' \
                                f'<span style="background-color: #4a90d9; color: white; padding: 5px 10px; ' \
                                f'border-radius: 10px; display: inline-block; margin-top: 2px; ' \
                                f'max-width: 80%; word-wrap: break-word;">{content}</span></div>'
