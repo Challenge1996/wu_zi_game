@@ -1292,10 +1292,27 @@ class MainWindow(QMainWindow):
         """停止轮询"""
         self.running = False
         
+    def send_heartbeat(self):
+        """发送心跳包维持在线状态"""
+        if not self.player_id:
+            return
+        
+        def do_heartbeat():
+            data = {'player_id': self.player_id}
+            success, result = self._request('POST', '/api/player/heartbeat', data)
+            if not success:
+                self.append_log(f"心跳发送失败: {result}")
+        
+        thread = threading.Thread(target=do_heartbeat, daemon=True)
+        thread.start()
+        
     def polling_loop(self):
         """轮询循环"""
         while self.running:
             try:
+                # 发送心跳维持在线状态
+                self.send_heartbeat()
+                
                 # 如果有房间，获取房间信息
                 if self.current_room_id:
                     params = {
