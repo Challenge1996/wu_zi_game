@@ -61,6 +61,10 @@ class MainWindow(QMainWindow):
         self.game_over_shown = False  # 游戏结束弹窗是否已显示
         self.pending_undo_request_id = None  # 当前待处理的悔棋请求ID
         
+        # 认输相关
+        self.last_resign_reason = None  # 最后一次认输原因
+        self.last_move_count = 0  # 上一次的落子数，用于检测落子变化
+        
         # 轮询线程
         self.polling_thread = None
         self.running = False
@@ -229,8 +233,39 @@ class MainWindow(QMainWindow):
         row2_layout.addWidget(self.reset_btn)
         row2_layout.addWidget(self.coin_btn)
         
+        # 第三排按钮
+        row3_layout = QHBoxLayout()
+        self.resign_btn = QPushButton("认输")
+        self.resign_btn.clicked.connect(self.request_resign)
+        self.resign_btn.setEnabled(False)
+        self.resign_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+            QPushButton:pressed {
+                background-color: #bd2130;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        
+        row3_layout.addStretch()
+        row3_layout.addWidget(self.resign_btn)
+        row3_layout.addStretch()
+        
         game_layout.addLayout(row1_layout)
         game_layout.addLayout(row2_layout)
+        game_layout.addLayout(row3_layout)
         
         right_layout.addWidget(game_group)
         
@@ -840,11 +875,15 @@ class MainWindow(QMainWindow):
         self.coin_btn.setEnabled(True)
         self.undo_btn.setEnabled(False)
         self.reset_btn.setEnabled(False)
+        self.resign_btn.setEnabled(False)
         # 重置游戏结束弹窗状态
         self.game_over_shown = False
         # 重置悔棋请求相关状态
         self.shown_undo_request_id = None
         self.pending_undo_request_id = None
+        # 重置认输相关状态
+        self.last_resign_reason = None
+        self.last_move_count = 0
     
     def _enable_game_controls(self):
         """启用游戏控件（主线程）"""
@@ -852,12 +891,17 @@ class MainWindow(QMainWindow):
         self.undo_btn.setEnabled(True)
         self.reset_btn.setEnabled(True)
         self.coin_btn.setEnabled(False)
+        self.resign_btn.setEnabled(True)
+        
+        if self.my_color:
+            self.timer_widget.set_my_color(self.my_color)
     
     def _disable_game_controls(self):
         """禁用游戏控件（主线程）"""
         self.board.set_click_enabled(False)
         self.undo_btn.setEnabled(False)
         self.reset_btn.setEnabled(False)
+        self.resign_btn.setEnabled(False)
     
     # ==================== 悔棋请求相关槽函数 ====================
     
@@ -1172,6 +1216,43 @@ class MainWindow(QMainWindow):
         
         thread = threading.Thread(target=do_reset, daemon=True)
         thread.start()
+    
+    def request_resign(self):
+        """请求认输"""
+        if not self.current_room_id:
+            QMessageBox.warning(self, "提示", "当前没有游戏！")
+            return
+        
+        reply = QMessageBox.question(
+            self, "确认认输",
+            "确定要认输吗？这将直接判负，对手获胜。\n此操作不可撤销！",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+            
+        self.append_log("正在认输...")
+        
+        def do_resign():
+            data = {
+                'player_id': self.player_id,
+                'room_id': self.current_room_id
+            }
+            
+            success, result = self._request('POST', '/api/game/resign', data)
+            if success and result.get('success'):
+                self.signals.message_received.emit("✓ 认输成功")
+                self.signals.message_received.emit(result.get('message', '您已认输'))
+                
+                winner = result.get('winner')
+                if winner:
+                    self.signals.game_over.emit(winner)
+            else:
+                self.signals.error_occurred.emit(f"认输失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_resign, daemon=True)
+        thread.start()
         
     # ==================== 轮询和状态更新 ====================
     
@@ -1269,6 +1350,9 @@ class MainWindow(QMainWindow):
                 self.game_over_shown = False
                 self.shown_undo_request_id = None
                 self.pending_undo_request_id = None
+                self.last_resign_reason = None
+                self.last_move_count = 0
+                self.timer_widget.stop_countdown()
             
             if new_phase == 'playing':
                 self.status_label.setText("游戏状态: 游戏进行中")
@@ -1276,6 +1360,10 @@ class MainWindow(QMainWindow):
                 self.undo_btn.setEnabled(True)
                 self.reset_btn.setEnabled(True)
                 self.coin_btn.setEnabled(False)
+                self.resign_btn.setEnabled(True)
+                
+                if self.my_color:
+                    self.timer_widget.set_my_color(self.my_color)
                 
                 # 如果计时器还没开始，开始计时
                 if not self.timer_widget.is_running:
@@ -1290,12 +1378,40 @@ class MainWindow(QMainWindow):
                 self.status_label.setText("游戏状态: 等待开始")
                 self.board.set_click_enabled(False)
                 
+            elif new_phase == 'finished':
+                self.status_label.setText("游戏状态: 已结束")
+                self.timer_widget.stop_countdown()
+        
+        # 游戏进行中时更新倒计时
+        if new_phase == 'playing':
+            current_player = game_state.get('current_player', 1)
+            time_since_last_move = game_state.get('time_since_last_move', 0)
+            move_count = game_state.get('move_count', 0)
+            
+            # 检测落子数变化，重置倒计时
+            if move_count != self.last_move_count:
+                self.last_move_count = move_count
+                # 落子变化，重置倒计时
+                self.timer_widget.start_countdown(current_player)
+            else:
+                # 继续倒计时，计算剩余时间
+                from constants import MOVE_TIMEOUT_SECONDS
+                remaining = max(0, MOVE_TIMEOUT_SECONDS - time_since_last_move)
+                # 只有当倒计时没在运行时才启动，或者同步时间
+                if not self.timer_widget.countdown_running:
+                    self.timer_widget.start_countdown(current_player, remaining)
+                else:
+                    # 同步显示
+                    if self.timer_widget.current_player != current_player:
+                        self.timer_widget.start_countdown(current_player, remaining)
+        
         # 更新回合显示
         self.update_turn_display()
         
         # 检查游戏是否结束（只弹窗一次）
         if game_state.get('game_over') and not self.game_over_shown:
             winner = game_state.get('winner')
+            self.last_resign_reason = game_state.get('resign_reason')
             self.game_over_shown = True  # 标记已显示游戏结束弹窗
             self.signals.game_over.emit(winner)
             
@@ -1308,6 +1424,7 @@ class MainWindow(QMainWindow):
                     self.my_color_label.setText("⚫ 执黑棋")
                 else:
                     self.my_color_label.setText("⚪ 执白棋")
+                self.timer_widget.set_my_color(self.my_color)
         
         # 处理悔棋请求
         undo_request = room.get('undo_request')
@@ -1378,19 +1495,54 @@ class MainWindow(QMainWindow):
     def on_game_over(self, winner):
         """游戏结束"""
         self.timer_widget.stop_timer()
+        self.timer_widget.stop_countdown()
         self.board.set_click_enabled(False)
         self.game_phase = "finished"
         self.status_label.setText("游戏状态: 已结束")
         
+        self.undo_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
+        self.resign_btn.setEnabled(False)
+        
         winner_name = "黑棋" if winner == 1 else "白棋"
         is_my_win = (winner == self.my_color)
         
+        resign_reason = self.last_resign_reason
+        
+        reason_text = ""
+        log_suffix = ""
+        
+        if resign_reason == 'user':
+            if is_my_win:
+                reason_text = "对手主动认输"
+            else:
+                reason_text = "您主动认输"
+            log_suffix = "（认输）"
+        elif resign_reason == 'timeout':
+            if is_my_win:
+                reason_text = "对手超时未下子"
+            else:
+                reason_text = "您超时未下子"
+            log_suffix = "（超时）"
+        elif resign_reason == 'offline':
+            if is_my_win:
+                reason_text = "对手已离线"
+            else:
+                reason_text = "您已离线"
+            log_suffix = "（离线）"
+        
         if is_my_win:
-            message = f"🎉 恭喜！您获胜了！\n\n{winner_name}获胜！"
+            if reason_text:
+                message = f"🎉 恭喜！您获胜了！\n\n{reason_text}\n{winner_name}获胜！"
+            else:
+                message = f"🎉 恭喜！您获胜了！\n\n{winner_name}获胜！"
         else:
-            message = f"😢 您输了...\n\n{winner_name}获胜！"
+            if reason_text:
+                message = f"😢 您输了...\n\n{reason_text}\n{winner_name}获胜！"
+            else:
+                message = f"😢 您输了...\n\n{winner_name}获胜！"
             
-        self.append_log(f"★ 游戏结束！{winner_name}获胜！ ★")
+        self.append_log(f"★ 游戏结束！{winner_name}获胜！{log_suffix} ★")
         
         QMessageBox.information(self, "游戏结束", message)
         

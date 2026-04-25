@@ -313,6 +313,27 @@ class ClientCore:
                 self.current_room_id = room_id
         return success, result
     
+    def resign(self, room_id=None):
+        """认输
+        Args:
+            room_id: 房间ID，如果为None则使用当前房间
+        Returns:
+            (success, result)
+        """
+        room_to_use = room_id or self.current_room_id
+        if not room_to_use:
+            return False, "没有指定房间ID"
+        
+        if not self.player_id:
+            return False, "请先注册玩家"
+        
+        data = {
+            'player_id': self.player_id,
+            'room_id': room_to_use
+        }
+        
+        return self._request('POST', '/api/game/resign', data)
+    
     def get_room_status_name(self, status):
         """获取房间状态名称"""
         names = {

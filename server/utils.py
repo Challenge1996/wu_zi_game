@@ -7,10 +7,17 @@
 from constants import (
     CHALLENGE_EXPIRE_SECONDS,
     UNDO_REQUEST_EXPIRE_SECONDS,
+    MOVE_TIMEOUT_SECONDS,
+    PLAYER_OFFLINE_TIMEOUT,
     ROOM_STATUS_WAITING,
     ROOM_STATUS_COIN_TOSS,
     ROOM_STATUS_PLAYING,
-    ROOM_STATUS_FINISHED
+    ROOM_STATUS_FINISHED,
+    PLAYER_STATUS_IDLE,
+    RESIGN_REASON_TIMEOUT,
+    RESIGN_REASON_OFFLINE,
+    PLAYER_BLACK,
+    PLAYER_WHITE
 )
 from util import get_timestamp
 from server.data_store import players, rooms, undo_requests, challenges
@@ -129,3 +136,166 @@ def get_room_status_name(status):
         ROOM_STATUS_FINISHED: '已结束'
     }
     return names.get(status, status)
+
+
+def check_move_timeout(room):
+    """检查当前玩家是否超时未下子
+    Args:
+        room: 房间对象
+    Returns:
+        (是否超时, 消息)
+    """
+    if room['status'] != ROOM_STATUS_PLAYING:
+        return False, None
+    
+    game = room['game']
+    if game.game_over:
+        return False, None
+    
+    time_since_last_move = game.get_time_since_last_move()
+    
+    if time_since_last_move >= MOVE_TIMEOUT_SECONDS:
+        current_player_color = game.get_current_player()
+        
+        success, message = game.resign(current_player_color, RESIGN_REASON_TIMEOUT)
+        
+        if success:
+            room['status'] = ROOM_STATUS_FINISHED
+            room['finished_at'] = get_timestamp()
+            room['winner'] = game.get_winner()
+            
+            if room['player1'] in players:
+                players[room['player1']]['status'] = PLAYER_STATUS_IDLE
+                players[room['player1']]['current_room'] = None
+            if room['player2'] in players:
+                players[room['player2']]['status'] = PLAYER_STATUS_IDLE
+                players[room['player2']]['current_room'] = None
+            
+            return True, message
+    
+    return False, None
+
+
+def check_player_offline(room):
+    """检查房间中的玩家是否离线
+    Args:
+        room: 房间对象
+    Returns:
+        (是否有玩家离线, 消息)
+    """
+    if room['status'] != ROOM_STATUS_PLAYING:
+        return False, None
+    
+    game = room['game']
+    if game.game_over:
+        return False, None
+    
+    now = get_timestamp()
+    
+    player1_id = room['player1']
+    player2_id = room['player2']
+    
+    player1_offline = False
+    player2_offline = False
+    
+    if player1_id in players:
+        player1 = players[player1_id]
+        if not player1.get('online', False):
+            player1_offline = True
+        else:
+            last_heartbeat = player1.get('last_heartbeat', 0)
+            if now - last_heartbeat > PLAYER_OFFLINE_TIMEOUT:
+                player1_offline = True
+    
+    if player2_id in players:
+        player2 = players[player2_id]
+        if not player2.get('online', False):
+            player2_offline = True
+        else:
+            last_heartbeat = player2.get('last_heartbeat', 0)
+            if now - last_heartbeat > PLAYER_OFFLINE_TIMEOUT:
+                player2_offline = True
+    
+    if player1_offline and player2_offline:
+        room['status'] = ROOM_STATUS_FINISHED
+        room['finished_at'] = get_timestamp()
+        game.game_over = True
+        game.game_phase = 'finished'
+        game.winner = None
+        game.resign_reason = RESIGN_REASON_OFFLINE
+        
+        if player1_id in players:
+            players[player1_id]['status'] = PLAYER_STATUS_IDLE
+            players[player1_id]['current_room'] = None
+        if player2_id in players:
+            players[player2_id]['status'] = PLAYER_STATUS_IDLE
+            players[player2_id]['current_room'] = None
+        
+        return True, "双方玩家均已离线，游戏结束"
+    
+    if player1_offline:
+        player1_color = game.get_player_color(player1_id)
+        if player1_color:
+            success, message = game.resign(player1_color, RESIGN_REASON_OFFLINE)
+            if success:
+                room['status'] = ROOM_STATUS_FINISHED
+                room['finished_at'] = get_timestamp()
+                room['winner'] = game.get_winner()
+                
+                if player1_id in players:
+                    players[player1_id]['status'] = PLAYER_STATUS_IDLE
+                    players[player1_id]['current_room'] = None
+                if player2_id in players:
+                    players[player2_id]['status'] = PLAYER_STATUS_IDLE
+                    players[player2_id]['current_room'] = None
+                
+                return True, message
+    
+    if player2_offline:
+        player2_color = game.get_player_color(player2_id)
+        if player2_color:
+            success, message = game.resign(player2_color, RESIGN_REASON_OFFLINE)
+            if success:
+                room['status'] = ROOM_STATUS_FINISHED
+                room['finished_at'] = get_timestamp()
+                room['winner'] = game.get_winner()
+                
+                if player1_id in players:
+                    players[player1_id]['status'] = PLAYER_STATUS_IDLE
+                    players[player1_id]['current_room'] = None
+                if player2_id in players:
+                    players[player2_id]['status'] = PLAYER_STATUS_IDLE
+                    players[player2_id]['current_room'] = None
+                
+                return True, message
+    
+    return False, None
+
+
+def cleanup_all_timeouts():
+    """清理所有超时的房间
+    Returns:
+        超时处理的房间列表
+    """
+    results = []
+    
+    for room_id, room in rooms.items():
+        if room['status'] == ROOM_STATUS_PLAYING:
+            timeout, msg = check_move_timeout(room)
+            if timeout:
+                results.append({
+                    'room_id': room_id,
+                    'type': 'timeout',
+                    'message': msg
+                })
+                continue
+            
+            offline, msg = check_player_offline(room)
+            if offline:
+                results.append({
+                    'room_id': room_id,
+                    'type': 'offline',
+                    'message': msg
+                })
+    
+    return results

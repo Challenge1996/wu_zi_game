@@ -8,6 +8,7 @@ from flask import request, jsonify
 from constants import (
     CHALLENGE_EXPIRE_SECONDS,
     UNDO_REQUEST_EXPIRE_SECONDS,
+    MOVE_TIMEOUT_SECONDS,
     PLAYER_BLACK,
     PLAYER_WHITE,
     PLAYER_STATUS_IDLE,
@@ -28,7 +29,8 @@ from constants import (
     UNDO_REQUEST_STATUS_EXPIRED,
     GAME_PHASE_PLAYING,
     GAME_PHASE_COIN_TOSS,
-    GAME_PHASE_FINISHED
+    GAME_PHASE_FINISHED,
+    RESIGN_REASON_USER
 )
 from util import get_timestamp, generate_id
 from game import WuziqiGame
@@ -39,7 +41,8 @@ from server.utils import (
     cleanup_expired_challenges,
     cleanup_expired_undo_requests,
     get_room_undo_request,
-    get_undo_request_info
+    get_undo_request_info,
+    cleanup_all_timeouts
 )
 
 
@@ -411,6 +414,8 @@ def register_routes(app):
                 "success": False,
                 "message": "房间不存在"
             }), 400
+        
+        cleanup_all_timeouts()
         
         return jsonify({
             "success": True,
@@ -1011,4 +1016,72 @@ def register_routes(app):
             "room_id": room_id,
             "message": f"游戏开始！{player1_name}执黑棋，{player2_name}执白棋",
             "game_state": game.get_game_state()
+        })
+
+    @app.route('/api/game/resign', methods=['POST'])
+    def resign_api():
+        """玩家认输接口
+        请求参数:
+            player_id: 认输的玩家ID
+            room_id: 房间ID
+        """
+        data = request.get_json() or {}
+        player_id = data.get('player_id')
+        room_id = data.get('room_id')
+        
+        if not player_id or not room_id:
+            return jsonify({
+                "success": False,
+                "message": "缺少必要参数"
+            }), 400
+        
+        if room_id not in rooms:
+            return jsonify({
+                "success": False,
+                "message": "房间不存在"
+            }), 400
+        
+        room = rooms[room_id]
+        
+        if room['status'] != ROOM_STATUS_PLAYING:
+            return jsonify({
+                "success": False,
+                "message": "游戏未开始或已结束"
+            }), 400
+        
+        game = room['game']
+        
+        player_color = game.get_player_color(player_id)
+        if player_color is None:
+            return jsonify({
+                "success": False,
+                "message": "您不是该房间的玩家"
+            }), 400
+        
+        success, message = game.resign(player_color, RESIGN_REASON_USER)
+        
+        if success:
+            room['status'] = ROOM_STATUS_FINISHED
+            room['finished_at'] = get_timestamp()
+            room['winner'] = game.get_winner()
+            
+            if room['player1'] in players:
+                players[room['player1']]['status'] = PLAYER_STATUS_IDLE
+                players[room['player1']]['current_room'] = None
+            if room['player2'] in players:
+                players[room['player2']]['status'] = PLAYER_STATUS_IDLE
+                players[room['player2']]['current_room'] = None
+            
+            return jsonify({
+                "success": True,
+                "message": message,
+                "winner": game.get_winner(),
+                "loser": player_color,
+                "resign_reason": RESIGN_REASON_USER,
+                "game_state": game.get_game_state(player_id)
+            })
+        
+        return jsonify({
+            "success": False,
+            "message": message
         })

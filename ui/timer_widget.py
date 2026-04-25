@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
-from constants import PLAYER_BLACK, PLAYER_WHITE
+from constants import PLAYER_BLACK, PLAYER_WHITE, MOVE_TIMEOUT_SECONDS
 from util import format_time
 
 
@@ -18,6 +18,10 @@ class TimerWidget(QWidget):
         self.current_player = PLAYER_BLACK
         self.is_running = False
         self.wait_time = 0
+        
+        self.countdown_time = MOVE_TIMEOUT_SECONDS
+        self.countdown_running = False
+        self.my_color = None
         
         self.init_ui()
         self.setup_timer()
@@ -76,9 +80,37 @@ class TimerWidget(QWidget):
         wait_layout.addWidget(wait_label)
         wait_layout.addWidget(self.wait_lcd)
         
+        countdown_frame = QFrame()
+        countdown_frame.setFrameStyle(QFrame.StyledPanel)
+        countdown_layout = QVBoxLayout(countdown_frame)
+        
+        countdown_title_layout = QHBoxLayout()
+        self.countdown_label = QLabel("落子倒计时:")
+        self.countdown_label.setFont(QFont("Arial", 11, QFont.Bold))
+        
+        self.countdown_status_label = QLabel("")
+        self.countdown_status_label.setFont(QFont("Arial", 10))
+        
+        countdown_title_layout.addWidget(self.countdown_label)
+        countdown_title_layout.addStretch()
+        countdown_title_layout.addWidget(self.countdown_status_label)
+        
+        countdown_display_layout = QHBoxLayout()
+        self.countdown_lcd = QLCDNumber(5)
+        self.countdown_lcd.setSegmentStyle(QLCDNumber.Flat)
+        self.countdown_lcd.setStyleSheet("color: green; background-color: #e0ffe0; font-size: 24px;")
+        self.countdown_lcd.display("02:00")
+        self.countdown_lcd.setMinimumHeight(50)
+        
+        countdown_display_layout.addWidget(self.countdown_lcd)
+        
+        countdown_layout.addLayout(countdown_title_layout)
+        countdown_layout.addLayout(countdown_display_layout)
+        
         time_layout.addWidget(black_frame)
         time_layout.addWidget(white_frame)
         time_layout.addWidget(wait_frame)
+        time_layout.addWidget(countdown_frame)
         
         layout.addWidget(time_group)
         
@@ -89,6 +121,9 @@ class TimerWidget(QWidget):
         
         self.wait_timer = QTimer(self)
         self.wait_timer.timeout.connect(self.update_wait_time)
+        
+        self.countdown_timer = QTimer(self)
+        self.countdown_timer.timeout.connect(self.update_countdown)
         
     def start_timer(self, current_player=PLAYER_BLACK):
         """开始游戏计时"""
@@ -107,6 +142,7 @@ class TimerWidget(QWidget):
         self.player1_time = 0
         self.player2_time = 0
         self.wait_time = 0
+        self.stop_countdown()
         self.update_display()
         
     def update_game_time(self):
@@ -146,3 +182,64 @@ class TimerWidget(QWidget):
         else:
             self.black_lcd.setStyleSheet("color: black; background-color: #f0f0f0;")
             self.white_lcd.setStyleSheet("color: red; background-color: #ffe0e0;")
+    
+    def start_countdown(self, player_color, time_remaining=None):
+        """开始倒计时
+        Args:
+            player_color: 当前落子的玩家颜色
+            time_remaining: 剩余时间（秒），如果为None则使用默认值
+        """
+        self.current_player = player_color
+        if time_remaining is not None:
+            self.countdown_time = time_remaining
+        else:
+            self.countdown_time = MOVE_TIMEOUT_SECONDS
+        
+        self.countdown_running = True
+        self.update_countdown_display()
+        
+        if not self.countdown_timer.isActive():
+            self.countdown_timer.stop()
+        self.countdown_timer.start(1000)
+        
+        if self.my_color is not None:
+            if player_color == self.my_color:
+                self.countdown_status_label.setText("轮到您落子")
+                self.countdown_status_label.setStyleSheet("color: green; font-weight: bold;")
+            else:
+                self.countdown_status_label.setText("等待对手")
+                self.countdown_status_label.setStyleSheet("color: blue;")
+        
+    def stop_countdown(self):
+        """停止倒计时"""
+        self.countdown_running = False
+        if self.countdown_timer.isActive():
+            self.countdown_timer.stop()
+        self.countdown_status_label.setText("")
+        
+    def update_countdown(self):
+        """更新倒计时"""
+        if self.countdown_time > 0:
+            self.countdown_time -= 1
+            self.update_countdown_display()
+        else:
+            self.stop_countdown()
+    
+    def update_countdown_display(self):
+        """更新倒计时显示"""
+        minutes = self.countdown_time // 60
+        seconds = self.countdown_time % 60
+        time_str = f"{minutes:02d}:{seconds:02d}"
+        self.countdown_lcd.display(time_str)
+        
+        if self.countdown_time <= 10:
+            self.countdown_lcd.setStyleSheet("color: red; background-color: #ffe0e0;")
+        elif self.countdown_time <= 30:
+            self.countdown_lcd.setStyleSheet("color: orange; background-color: #fff0e0;")
+        else:
+            self.countdown_lcd.setStyleSheet("color: green; background-color: #e0ffe0;")
+    
+    def set_my_color(self, color):
+        """设置当前玩家颜色，用于判断倒计时提示
+        """
+        self.my_color = color

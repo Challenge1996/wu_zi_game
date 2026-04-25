@@ -61,3 +61,9 @@ class GameSignals(QObject):
     undo_request_declined = pyqtSignal(dict)
     undo_request_expired = pyqtSignal(dict)
     show_undo_request_dialog = pyqtSignal(dict)
+    
+    resign_received = pyqtSignal(dict)
+    resign_accepted = pyqtSignal(dict)
+    show_resign_confirmation = pyqtSignal()
+    update_countdown = pyqtSignal(int, int)
+    timeout_warning = pyqtSignal(int)

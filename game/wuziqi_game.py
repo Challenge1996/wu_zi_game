@@ -32,6 +32,8 @@ class WuziqiGame:
         self.players = {PLAYER_BLACK: None, PLAYER_WHITE: None}
         self.player_choices = {}
         self.coin_result = None
+        self.last_move_time = None
+        self.resign_reason = None
         self.initialize_board()
 
     def initialize_board(self):
@@ -45,6 +47,8 @@ class WuziqiGame:
         self.players = {PLAYER_BLACK: None, PLAYER_WHITE: None}
         self.player_choices = {}
         self.coin_result = None
+        self.last_move_time = None
+        self.resign_reason = None
 
     def check_win(self, row, col, player):
         """检查玩家是否获胜"""
@@ -91,6 +95,7 @@ class WuziqiGame:
         
         self.move_history.append((row, col, player))
         self.board[row][col] = player
+        self.last_move_time = time.time()
         
         if self.check_win(row, col, player):
             self.game_over = True
@@ -119,6 +124,64 @@ class WuziqiGame:
             self.game_phase = GAME_PHASE_PLAYING
         
         return True, f"已悔棋：行={row}, 列={col}, 玩家={'黑棋' if player == PLAYER_BLACK else '白棋'}"
+
+    def resign(self, player_color, reason='user'):
+        """玩家认输
+        Args:
+            player_color: 认输的玩家颜色
+            reason: 认输原因 ('user', 'timeout', 'offline')
+        Returns:
+            (success, message)
+        """
+        if self.game_over:
+            return False, "游戏已结束"
+        
+        if self.game_phase != GAME_PHASE_PLAYING:
+            return False, "游戏尚未开始"
+        
+        if player_color not in [PLAYER_BLACK, PLAYER_WHITE]:
+            return False, "无效的玩家颜色"
+        
+        self.game_over = True
+        self.game_phase = GAME_PHASE_FINISHED
+        self.resign_reason = reason
+        
+        if player_color == PLAYER_BLACK:
+            self.winner = PLAYER_WHITE
+            loser_name = '黑棋'
+            winner_name = '白棋'
+        else:
+            self.winner = PLAYER_BLACK
+            loser_name = '白棋'
+            winner_name = '黑棋'
+        
+        reason_message = {
+            'user': f'{loser_name}认输，{winner_name}获胜！',
+            'timeout': f'{loser_name}超时未下子，{winner_name}获胜！',
+            'offline': f'{loser_name}离线，{winner_name}获胜！'
+        }
+        
+        return True, reason_message.get(reason, f'{loser_name}认输，{winner_name}获胜！')
+
+    def get_opponent_color(self, player_color):
+        """获取对手颜色"""
+        if player_color == PLAYER_BLACK:
+            return PLAYER_WHITE
+        elif player_color == PLAYER_WHITE:
+            return PLAYER_BLACK
+        return None
+
+    def get_time_since_last_move(self):
+        """获取距上次落子的时间（秒）"""
+        if self.last_move_time is None:
+            if self.start_time is not None:
+                return int(time.time() - self.start_time)
+            return 0
+        return int(time.time() - self.last_move_time)
+
+    def get_resign_reason(self):
+        """获取认输原因"""
+        return self.resign_reason
 
     def start_game(self):
         """开始游戏"""
@@ -306,7 +369,9 @@ class WuziqiGame:
             "winner": self.winner,
             "game_phase": self.game_phase,
             "game_time": self.get_game_time(),
-            "move_count": len(self.move_history)
+            "move_count": len(self.move_history),
+            "time_since_last_move": self.get_time_since_last_move(),
+            "resign_reason": self.resign_reason
         }
         
         if player_id is not None:
