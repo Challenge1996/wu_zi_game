@@ -8,3 +8,4 @@ players = {}
 rooms = {}
 challenges = {}
 undo_requests = {}
+chat_messages = {}

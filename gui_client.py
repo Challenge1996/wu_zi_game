@@ -273,25 +273,55 @@ class MainWindow(QMainWindow):
         self.timer_widget = TimerWidget()
         right_layout.addWidget(self.timer_widget)
         
-        # 消息日志
-        log_group = QGroupBox("消息日志")
-        log_layout = QVBoxLayout(log_group)
+        # 聊天系统
+        chat_group = QGroupBox("聊天")
+        chat_layout = QVBoxLayout(chat_group)
         
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(150)
-        self.log_text.setStyleSheet("""
+        self.chat_text = QTextEdit()
+        self.chat_text.setReadOnly(True)
+        self.chat_text.setMinimumHeight(120)
+        self.chat_text.setStyleSheet("""
             QTextEdit {
-                background-color: white;
+                background-color: #fafafa;
                 border: 2px solid #cccccc;
                 border-radius: 5px;
-                font-family: Consolas, Monaco, monospace;
-                font-size: 11px;
+                font-family: Arial, sans-serif;
+                font-size: 12px;
             }
         """)
         
-        log_layout.addWidget(self.log_text)
-        right_layout.addWidget(log_group)
+        chat_layout.addWidget(self.chat_text)
+        
+        # 聊天输入区域
+        input_layout = QHBoxLayout()
+        
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("输入消息...")
+        self.chat_input.setStyleSheet("""
+            QLineEdit {
+                padding: 5px;
+                border: 2px solid #cccccc;
+                border-radius: 5px;
+            }
+            QLineEdit:focus {
+                border-color: #4a90d9;
+            }
+        """)
+        self.chat_input.returnPressed.connect(self.send_chat_message)
+        
+        self.send_btn = QPushButton("发送")
+        self.send_btn.setMinimumWidth(60)
+        self.send_btn.clicked.connect(self.send_chat_message)
+        self.send_btn.setEnabled(False)
+        
+        input_layout.addWidget(self.chat_input, 3)
+        input_layout.addWidget(self.send_btn, 1)
+        
+        chat_layout.addLayout(input_layout)
+        right_layout.addWidget(chat_group)
+        
+        self.last_chat_message_id = None
+        self.chat_messages = []
         
         main_layout.addWidget(right_widget, 1)
         
@@ -358,12 +388,14 @@ class MainWindow(QMainWindow):
         self.signals.show_color_choice.connect(self.on_show_color_choice)
         
         # 计时器相关信号
-        self.signals.start_waiting_timer.connect(self.timer_widget.start_waiting)
-        self.signals.stop_waiting_timer.connect(self.timer_widget.stop_waiting)
         self.signals.start_game_timer.connect(self.timer_widget.start_timer)
         self.signals.stop_game_timer.connect(self.timer_widget.stop_timer)
         self.signals.reset_timer.connect(self.timer_widget.reset_timer)
         self.signals.switch_timer_player.connect(self.timer_widget.switch_player)
+        
+        # 聊天相关信号
+        self.signals.chat_message_received.connect(self.on_chat_message_received)
+        self.signals.chat_messages_updated.connect(self.on_chat_messages_updated)
         
         # 按钮状态信号
         self.signals.disable_coin_button.connect(lambda: self.coin_btn.setEnabled(False))
@@ -745,9 +777,6 @@ class MainWindow(QMainWindow):
                         # 游戏正式开始
                         self.signals.message_received.emit("✓ 游戏开始！黑棋先下。")
                         
-                        # 停止等待计时器
-                        self.signals.stop_waiting_timer.emit()
-                        
                         # 更新游戏状态
                         self.signals.update_game_phase.emit("playing")
                         
@@ -762,13 +791,12 @@ class MainWindow(QMainWindow):
                     else:
                         self.signals.error_occurred.emit(f"解析硬币结果失败: {resolve_result.get('message', '未知错误')}")
                 else:
-                    # 旧的逻辑：等待对方选择
+                    # 等待对方选择
                     self.signals.message_received.emit("✓ 硬币选择已提交")
                     self.signals.message_received.emit("等待对方选择...")
                     
-                    # 通过信号禁用按钮和启动等待计时器
+                    # 通过信号禁用按钮
                     self.signals.disable_coin_button.emit()
-                    self.signals.start_waiting_timer.emit()
             else:
                 self.signals.error_occurred.emit(f"提交选择失败: {result.get('message', '未知错误')}")
         
@@ -785,9 +813,6 @@ class MainWindow(QMainWindow):
     def on_show_color_choice(self):
         """显示颜色选择对话框"""
         self.append_log("请选择执子颜色...")
-        
-        # 停止等待计时
-        self.timer_widget.stop_waiting()
         
         # 显示颜色选择对话框
         color_dialog = ColorChoiceDialog(self)
@@ -849,7 +874,6 @@ class MainWindow(QMainWindow):
             self.signals.show_color_choice.emit()
         else:
             self.append_log(f"对方选择了{winner_choice}，猜对了。等待对方选择颜色...")
-            self.signals.start_waiting_timer.emit()
     
     def on_color_chosen(self, color):
         """颜色选择后（主线程）"""
@@ -1095,7 +1119,6 @@ class MainWindow(QMainWindow):
                         # 通过信号启用游戏控件和开始计时
                         self.signals.update_game_phase.emit("playing")
                         self.signals.enable_game_controls.emit()
-                        self.signals.stop_waiting_timer.emit()
                         self.signals.start_game_timer.emit(1)
                         
                         # 更新回合显示
@@ -1365,9 +1388,9 @@ class MainWindow(QMainWindow):
                 if self.my_color:
                     self.timer_widget.set_my_color(self.my_color)
                 
-                # 如果计时器还没开始，开始计时
+                self.send_btn.setEnabled(True)
+                
                 if not self.timer_widget.is_running:
-                    self.timer_widget.stop_waiting()
                     self.timer_widget.start_timer(game_state.get('current_player', 1))
                     
             elif new_phase == 'coin_toss':
@@ -1460,6 +1483,11 @@ class MainWindow(QMainWindow):
         # 如果没有悔棋请求了，重置已显示的请求ID
         else:
             self.shown_undo_request_id = None
+        
+        # 处理聊天消息
+        chat_messages = room.get('chat_messages', [])
+        if chat_messages:
+            self.signals.chat_messages_updated.emit(chat_messages)
                     
     def update_turn_display(self):
         """更新回合显示"""
@@ -1546,16 +1574,117 @@ class MainWindow(QMainWindow):
         
         QMessageBox.information(self, "游戏结束", message)
         
+    # ==================== 聊天相关方法 ====================
+    
+    def send_chat_message(self):
+        """发送聊天消息"""
+        message = self.chat_input.text().strip()
+        if not message:
+            return
+        
+        if not self.current_room_id:
+            QMessageBox.warning(self, "提示", "当前没有游戏房间，无法发送消息！")
+            return
+        
+        self.chat_input.clear()
+        
+        def do_send():
+            data = {
+                'player_id': self.player_id,
+                'room_id': self.current_room_id,
+                'content': message
+            }
+            
+            success, result = self._request('POST', '/api/chat/send', data)
+            if success and result.get('success'):
+                chat_message = result.get('chat_message', {})
+                chat_message['is_my_message'] = True
+                self.signals.chat_message_received.emit(chat_message)
+            else:
+                self.append_log(f"发送消息失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_send, daemon=True)
+        thread.start()
+    
+    def on_chat_message_received(self, message):
+        """收到聊天消息"""
+        self.append_chat_message(message)
+    
+    def on_chat_messages_updated(self, messages):
+        """聊天消息列表更新"""
+        for msg in messages:
+            if msg.get('id') not in [m.get('id') for m in self.chat_messages]:
+                self.chat_messages.append(msg)
+                self.append_chat_message(msg)
+        
+        if messages:
+            self.last_chat_message_id = messages[-1].get('id')
+    
+    def append_chat_message(self, message):
+        """添加聊天消息到显示"""
+        timestamp = datetime.fromtimestamp(message.get('timestamp', datetime.now().timestamp())).strftime("%H:%M:%S")
+        msg_type = message.get('type', 'text')
+        is_my = message.get('is_my_message', False)
+        player_name = message.get('player_name', '系统')
+        content = message.get('content', '')
+        
+        formatted_msg = ""
+        
+        if msg_type == 'system':
+            formatted_msg = f'<div style="color: #888888; font-style: italic; text-align: center; margin: 5px 0;">' \
+                           f'[{timestamp}] {content}</div>'
+        elif msg_type == 'move':
+            formatted_msg = f'<div style="color: #6666cc; margin: 3px 0;">' \
+                           f'<span style="font-weight: bold;">[系统]</span> ' \
+                           f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
+                           f'&nbsp;&nbsp;{content}</div>'
+        elif msg_type == 'undo':
+            formatted_msg = f'<div style="color: #cc6666; margin: 3px 0;">' \
+                           f'<span style="font-weight: bold;">[系统]</span> ' \
+                           f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
+                           f'&nbsp;&nbsp;{content}</div>'
+        elif msg_type == 'resign':
+            formatted_msg = f'<div style="color: #cc3333; margin: 3px 0;">' \
+                           f'<span style="font-weight: bold;">[系统]</span> ' \
+                           f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
+                           f'&nbsp;&nbsp;{content}</div>'
+        else:
+            if is_my:
+                formatted_msg = f'<div style="text-align: right; margin: 5px 0;">' \
+                               f'<span style="color: #999999; font-size: 10px;">[{timestamp}]</span> ' \
+                               f'<span style="font-weight: bold; color: #4a90d9;">我</span><br/>' \
+                               f'<span style="background-color: #4a90d9; color: white; padding: 5px 10px; ' \
+                               f'border-radius: 10px; display: inline-block; margin-top: 2px; ' \
+                               f'max-width: 80%; word-wrap: break-word;">{content}</span></div>'
+            else:
+                formatted_msg = f'<div style="text-align: left; margin: 5px 0;">' \
+                               f'<span style="font-weight: bold; color: #555555;">{player_name}</span> ' \
+                               f'<span style="color: #999999; font-size: 10px;">[{timestamp}]</span><br/>' \
+                               f'<span style="background-color: #e8e8e8; color: #333333; padding: 5px 10px; ' \
+                               f'border-radius: 10px; display: inline-block; margin-top: 2px; ' \
+                               f'max-width: 80%; word-wrap: break-word;">{content}</span></div>'
+        
+        cursor = self.chat_text.textCursor()
+        cursor.movePosition(cursor.End)
+        cursor.insertHtml(formatted_msg + '<br/>')
+        
+        scrollbar = self.chat_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+    
     # ==================== 辅助方法 ====================
     
     def append_log(self, message):
-        """添加日志消息"""
+        """添加日志消息（同时显示为系统聊天消息）"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        log_message = f"[{timestamp}] {message}"
-        self.log_text.append(log_message)
-        # 自动滚动到底部
-        scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        
+        chat_msg = {
+            'id': f'log_{int(datetime.now().timestamp() * 1000000)}',
+            'type': 'system',
+            'content': message,
+            'timestamp': datetime.now().timestamp(),
+            'is_my_message': False
+        }
+        self.append_chat_message(chat_msg)
         
     def show_error(self, message):
         """显示错误消息"""

@@ -30,11 +30,16 @@ from constants import (
     GAME_PHASE_PLAYING,
     GAME_PHASE_COIN_TOSS,
     GAME_PHASE_FINISHED,
-    RESIGN_REASON_USER
+    RESIGN_REASON_USER,
+    CHAT_MESSAGE_TYPE_TEXT,
+    CHAT_MESSAGE_TYPE_SYSTEM,
+    CHAT_MESSAGE_TYPE_MOVE,
+    CHAT_MESSAGE_TYPE_UNDO,
+    CHAT_MESSAGE_TYPE_RESIGN
 )
 from util import get_timestamp, generate_id
 from game import WuziqiGame
-from server.data_store import players, rooms, challenges, undo_requests
+from server.data_store import players, rooms, challenges, undo_requests, chat_messages
 from server.utils import (
     get_player_info,
     get_room_info,
@@ -42,7 +47,10 @@ from server.utils import (
     cleanup_expired_undo_requests,
     get_room_undo_request,
     get_undo_request_info,
-    cleanup_all_timeouts
+    cleanup_all_timeouts,
+    init_room_chat,
+    add_chat_message,
+    get_room_chat_messages
 )
 
 
@@ -659,6 +667,17 @@ def register_routes(app):
         
         success, message = game.place_piece(row, col, player_color)
         
+        if success:
+            player_name = players[player_id]['name'] if player_id in players else '玩家'
+            color_name = "黑棋" if player_color == PLAYER_BLACK else "白棋"
+            add_chat_message(
+                room_id,
+                player_id,
+                CHAT_MESSAGE_TYPE_MOVE,
+                f"{player_name}（{color_name}）在 ({row}, {col}) 落子",
+                {'row': row, 'col': col, 'color': player_color}
+            )
+        
         if success and game.is_game_over():
             room['status'] = ROOM_STATUS_FINISHED
             room['finished_at'] = get_timestamp()
@@ -670,6 +689,16 @@ def register_routes(app):
             if room['player2'] in players:
                 players[room['player2']]['status'] = PLAYER_STATUS_IDLE
                 players[room['player2']]['current_room'] = None
+            
+            winner_color = game.get_winner()
+            winner_name = "黑棋" if winner_color == PLAYER_BLACK else "白棋"
+            add_chat_message(
+                room_id,
+                None,
+                CHAT_MESSAGE_TYPE_SYSTEM,
+                f"游戏结束！{winner_name}获胜！",
+                {'winner': winner_color}
+            )
         
         state = game.get_game_state(player_id)
         
@@ -845,6 +874,9 @@ def register_routes(app):
                 "message": "您不是被请求的玩家"
             }), 400
         
+        responder_name = players[player_id]['name'] if player_id in players else '玩家'
+        requester_name = players[undo_request['requester']]['name'] if undo_request['requester'] in players else '玩家'
+        
         if accept:
             undo_request['status'] = UNDO_REQUEST_STATUS_ACCEPTED
             
@@ -858,6 +890,15 @@ def register_routes(app):
                 room['finished_at'] = None
                 room['winner'] = None
             
+            if success:
+                add_chat_message(
+                    room_id,
+                    None,
+                    CHAT_MESSAGE_TYPE_UNDO,
+                    f"{responder_name} 同意了 {requester_name} 的悔棋请求",
+                    {'accepted': True}
+                )
+            
             state = game.get_game_state(player_id)
             
             return jsonify({
@@ -868,6 +909,14 @@ def register_routes(app):
             })
         else:
             undo_request['status'] = UNDO_REQUEST_STATUS_DECLINED
+            
+            add_chat_message(
+                room_id,
+                None,
+                CHAT_MESSAGE_TYPE_UNDO,
+                f"{responder_name} 拒绝了 {requester_name} 的悔棋请求",
+                {'accepted': False}
+            )
             
             game = room['game']
             state = game.get_game_state(player_id)
@@ -1072,6 +1121,15 @@ def register_routes(app):
                 players[room['player2']]['status'] = PLAYER_STATUS_IDLE
                 players[room['player2']]['current_room'] = None
             
+            player_name = players[player_id]['name'] if player_id in players else '玩家'
+            add_chat_message(
+                room_id, 
+                None, 
+                CHAT_MESSAGE_TYPE_SYSTEM, 
+                f"{player_name} 认输了！",
+                {'winner': game.get_winner()}
+            )
+            
             return jsonify({
                 "success": True,
                 "message": message,
@@ -1084,4 +1142,108 @@ def register_routes(app):
         return jsonify({
             "success": False,
             "message": message
+        })
+    
+    @app.route('/api/chat/send', methods=['POST'])
+    def chat_send_api():
+        """发送聊天消息接口
+        请求参数:
+            player_id: 发送者ID
+            room_id: 房间ID
+            content: 消息内容
+            message_type: 消息类型（可选，默认text）
+            extra_data: 额外数据（可选）
+        """
+        data = request.get_json() or {}
+        player_id = data.get('player_id')
+        room_id = data.get('room_id')
+        content = data.get('content', '')
+        message_type = data.get('message_type', CHAT_MESSAGE_TYPE_TEXT)
+        extra_data = data.get('extra_data', {})
+        
+        if not player_id or not room_id:
+            return jsonify({
+                "success": False,
+                "message": "缺少必要参数"
+            }), 400
+        
+        if room_id not in rooms:
+            return jsonify({
+                "success": False,
+                "message": "房间不存在"
+            }), 400
+        
+        if player_id not in players:
+            return jsonify({
+                "success": False,
+                "message": "玩家不存在"
+            }), 400
+        
+        room = rooms[room_id]
+        if player_id not in [room.get('player1'), room.get('player2'), 
+                              room.get('challenger_id'), room.get('challenged_id')]:
+            return jsonify({
+                "success": False,
+                "message": "您不是该房间的玩家"
+            }), 400
+        
+        if not content.strip() and message_type == CHAT_MESSAGE_TYPE_TEXT:
+            return jsonify({
+                "success": False,
+                "message": "消息内容不能为空"
+            }), 400
+        
+        message = add_chat_message(room_id, player_id, message_type, content.strip(), extra_data)
+        
+        return jsonify({
+            "success": True,
+            "message": "消息发送成功",
+            "chat_message": {
+                'id': message['id'],
+                'room_id': message['room_id'],
+                'player_id': message['player_id'],
+                'player_name': message['player_name'],
+                'type': message['type'],
+                'content': message['content'],
+                'extra_data': message['extra_data'],
+                'timestamp': message['timestamp']
+            }
+        })
+    
+    @app.route('/api/chat/history', methods=['GET'])
+    def chat_history_api():
+        """获取聊天历史接口
+        请求参数:
+            room_id: 房间ID
+            player_id: 玩家ID（可选）
+            since_id: 从指定消息ID之后获取（可选，用于增量获取）
+            limit: 返回消息数量限制（可选）
+        """
+        room_id = request.args.get('room_id')
+        player_id = request.args.get('player_id')
+        since_id = request.args.get('since_id')
+        limit = request.args.get('limit', type=int)
+        
+        if not room_id:
+            return jsonify({
+                "success": False,
+                "message": "缺少必要参数"
+            }), 400
+        
+        if room_id not in rooms:
+            return jsonify({
+                "success": False,
+                "message": "房间不存在"
+            }), 400
+        
+        messages = get_room_chat_messages(room_id, player_id, since_id)
+        
+        if limit and len(messages) > limit:
+            messages = messages[-limit:]
+        
+        return jsonify({
+            "success": True,
+            "room_id": room_id,
+            "messages": messages,
+            "count": len(messages)
         })

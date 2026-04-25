@@ -17,7 +17,6 @@ class TimerWidget(QWidget):
         self.player2_time = 0
         self.current_player = PLAYER_BLACK
         self.is_running = False
-        self.wait_time = 0
         
         self.countdown_time = MOVE_TIMEOUT_SECONDS
         self.countdown_running = False
@@ -65,21 +64,6 @@ class TimerWidget(QWidget):
         white_layout.addWidget(white_label)
         white_layout.addWidget(self.white_lcd)
         
-        wait_frame = QFrame()
-        wait_frame.setFrameStyle(QFrame.StyledPanel)
-        wait_layout = QHBoxLayout(wait_frame)
-        
-        wait_label = QLabel("等待时间:")
-        wait_label.setFont(QFont("Arial", 10))
-        
-        self.wait_lcd = QLCDNumber(8)
-        self.wait_lcd.setSegmentStyle(QLCDNumber.Flat)
-        self.wait_lcd.setStyleSheet("color: darkblue; background-color: #e0e0ff;")
-        self.wait_lcd.display("00:00:00")
-        
-        wait_layout.addWidget(wait_label)
-        wait_layout.addWidget(self.wait_lcd)
-        
         countdown_frame = QFrame()
         countdown_frame.setFrameStyle(QFrame.StyledPanel)
         countdown_layout = QVBoxLayout(countdown_frame)
@@ -109,7 +93,6 @@ class TimerWidget(QWidget):
         
         time_layout.addWidget(black_frame)
         time_layout.addWidget(white_frame)
-        time_layout.addWidget(wait_frame)
         time_layout.addWidget(countdown_frame)
         
         layout.addWidget(time_group)
@@ -118,9 +101,6 @@ class TimerWidget(QWidget):
         """设置计时器"""
         self.game_timer = QTimer(self)
         self.game_timer.timeout.connect(self.update_game_time)
-        
-        self.wait_timer = QTimer(self)
-        self.wait_timer.timeout.connect(self.update_wait_time)
         
         self.countdown_timer = QTimer(self)
         self.countdown_timer.timeout.connect(self.update_countdown)
@@ -141,7 +121,6 @@ class TimerWidget(QWidget):
         self.stop_timer()
         self.player1_time = 0
         self.player2_time = 0
-        self.wait_time = 0
         self.stop_countdown()
         self.update_display()
         
@@ -157,24 +136,10 @@ class TimerWidget(QWidget):
         """切换当前玩家"""
         self.current_player = PLAYER_WHITE if self.current_player == PLAYER_BLACK else PLAYER_BLACK
         
-    def start_waiting(self):
-        """开始等待计时"""
-        self.wait_timer.start(1000)
-        
-    def stop_waiting(self):
-        """停止等待计时"""
-        self.wait_timer.stop()
-        
-    def update_wait_time(self):
-        """更新等待时间"""
-        self.wait_time += 1
-        self.update_display()
-        
     def update_display(self):
         """更新显示"""
         self.black_lcd.display(format_time(self.player1_time))
         self.white_lcd.display(format_time(self.player2_time))
-        self.wait_lcd.display(format_time(self.wait_time))
         
         if self.current_player == PLAYER_BLACK:
             self.black_lcd.setStyleSheet("color: red; background-color: #ffe0e0;")

@@ -21,12 +21,13 @@ class GameSignals(QObject):
     turn_changed = pyqtSignal(int)
     show_color_choice = pyqtSignal()
     
-    start_waiting_timer = pyqtSignal()
-    stop_waiting_timer = pyqtSignal()
     start_game_timer = pyqtSignal(int)
     stop_game_timer = pyqtSignal()
     reset_timer = pyqtSignal()
     switch_timer_player = pyqtSignal()
+    
+    chat_message_received = pyqtSignal(dict)
+    chat_messages_updated = pyqtSignal(list)
     
     disable_coin_button = pyqtSignal()
     enable_coin_button = pyqtSignal()

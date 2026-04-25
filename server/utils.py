@@ -17,10 +17,13 @@ from constants import (
     RESIGN_REASON_TIMEOUT,
     RESIGN_REASON_OFFLINE,
     PLAYER_BLACK,
-    PLAYER_WHITE
+    PLAYER_WHITE,
+    CHAT_MESSAGE_TYPE_TEXT,
+    CHAT_MESSAGE_TYPE_SYSTEM,
+    CHAT_MAX_HISTORY
 )
-from util import get_timestamp
-from server.data_store import players, rooms, undo_requests, challenges
+from util import get_timestamp, generate_id
+from server.data_store import players, rooms, undo_requests, challenges, chat_messages
 
 
 def get_player_info(player_id):
@@ -48,6 +51,8 @@ def get_room_info(room_id, player_id=None):
     undo_request = get_room_undo_request(room_id)
     undo_request_info = get_undo_request_info(undo_request, player_id)
     
+    chat_messages = get_room_chat_messages(room_id, player_id)
+    
     return {
         'id': room['id'],
         'name': room['name'],
@@ -61,6 +66,7 @@ def get_room_info(room_id, player_id=None):
         'status': room['status'],
         'game_state': game_state,
         'undo_request': undo_request_info,
+        'chat_messages': chat_messages,
         'created_at': room['created_at'],
         'started_at': room['started_at'],
         'finished_at': room['finished_at'],
@@ -299,3 +305,88 @@ def cleanup_all_timeouts():
                 })
     
     return results
+
+
+def init_room_chat(room_id):
+    """初始化房间聊天
+    Args:
+        room_id: 房间ID
+    """
+    if room_id not in chat_messages:
+        chat_messages[room_id] = []
+
+
+def add_chat_message(room_id, player_id, message_type, content, extra_data=None):
+    """添加聊天消息
+    Args:
+        room_id: 房间ID
+        player_id: 发送者ID（系统消息为None）
+        message_type: 消息类型
+        content: 消息内容
+        extra_data: 额外数据（如落子位置等）
+    Returns:
+        消息对象
+    """
+    init_room_chat(room_id)
+    
+    now = get_timestamp()
+    message_id = generate_id()
+    
+    message = {
+        'id': message_id,
+        'room_id': room_id,
+        'player_id': player_id,
+        'player_name': players[player_id]['name'] if player_id in players else None,
+        'type': message_type,
+        'content': content,
+        'extra_data': extra_data or {},
+        'timestamp': now
+    }
+    
+    chat_messages[room_id].append(message)
+    
+    if len(chat_messages[room_id]) > CHAT_MAX_HISTORY:
+        chat_messages[room_id] = chat_messages[room_id][-CHAT_MAX_HISTORY:]
+    
+    return message
+
+
+def get_room_chat_messages(room_id, player_id=None, since_id=None):
+    """获取房间的聊天消息
+    Args:
+        room_id: 房间ID
+        player_id: 玩家ID（用于判断消息是谁发的）
+        since_id: 从指定消息ID之后获取（用于增量获取）
+    Returns:
+        消息列表
+    """
+    if room_id not in chat_messages:
+        return []
+    
+    messages = chat_messages[room_id]
+    
+    if since_id:
+        for i, msg in enumerate(messages):
+            if msg['id'] == since_id:
+                messages = messages[i+1:]
+                break
+    
+    result = []
+    for msg in messages:
+        msg_info = {
+            'id': msg['id'],
+            'room_id': msg['room_id'],
+            'player_id': msg['player_id'],
+            'player_name': msg['player_name'],
+            'type': msg['type'],
+            'content': msg['content'],
+            'extra_data': msg['extra_data'],
+            'timestamp': msg['timestamp']
+        }
+        
+        if player_id is not None:
+            msg_info['is_my_message'] = (msg['player_id'] == player_id)
+        
+        result.append(msg_info)
+    
+    return result
