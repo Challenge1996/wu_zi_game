@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-五子棋游戏核心逻辑
-（兼容旧导入方式 - 实际代码已重构到 game/wuziqi_game.py）
+游戏核心逻辑模块
 """
 
 from game.wuziqi_game import WuziqiGame
