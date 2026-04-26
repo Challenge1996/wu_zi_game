@@ -72,6 +72,6 @@ class GameSignals(QObject):
     public_rooms_updated = pyqtSignal(list)
     spectate_joined = pyqtSignal(dict)
     spectate_left = pyqtSignal()
-    enter_spectate_mode = pyqtSignal()
+    enter_spectate_mode = pyqtSignal(str)
     exit_spectate_mode = pyqtSignal()
     show_spectate_dialog = pyqtSignal()

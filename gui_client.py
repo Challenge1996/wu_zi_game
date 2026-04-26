@@ -1907,25 +1907,8 @@ class MainWindow(QMainWindow):
                 self.signals.message_received.emit("✓ 成功加入观战！")
                 self.signals.message_received.emit(result.get('message', ''))
                 
-                # 更新UI状态
-                self.signals.enter_spectate_mode.emit()
-                
-                # 更新玩家状态显示
-                self.player_status_label.setText("观战中")
-                
-                # 隐藏我的颜色显示
-                self.my_color_label.setText("")
-                
-                # 禁用挑战相关按钮（观战中不能发起挑战）
-                self.challenge_btn.setEnabled(False)
-                self.players_btn.setEnabled(False)
-                self.challenges_btn.setEnabled(False)
-                
-                # 更新窗口标题
-                self.setWindowTitle(f"五子棋 - 观战模式 - {room_id[:8]}")
-                
-                # 启用聊天
-                self.send_btn.setEnabled(True)
+                # 通过信号触发主线程UI更新，传递room_id
+                self.signals.enter_spectate_mode.emit(room_id)
             else:
                 self.signals.error_occurred.emit(f"加入观战失败: {result.get('message', '未知错误')}")
         
@@ -1957,39 +1940,8 @@ class MainWindow(QMainWindow):
                 self.signals.message_received.emit("✓ 已离开观战")
                 self.signals.message_received.emit(result.get('message', ''))
                 
-                # 更新UI状态
+                # 通过信号触发主线程UI更新
                 self.signals.exit_spectate_mode.emit()
-                
-                # 隐藏观战状态栏
-                self.spectate_status_frame.hide()
-                
-                # 恢复玩家状态显示
-                self.player_status_label.setText("在线")
-                
-                # 重置游戏状态
-                self.game_phase = "waiting"
-                self.status_label.setText("游戏状态: 未开始")
-                self.turn_label.setText("当前: 等待开始")
-                
-                # 清空棋盘
-                self.board.clear_board()
-                
-                # 恢复挑战相关按钮
-                self.challenge_btn.setEnabled(True)
-                self.players_btn.setEnabled(True)
-                self.challenges_btn.setEnabled(True)
-                
-                # 禁用聊天
-                self.send_btn.setEnabled(False)
-                
-                # 恢复窗口标题
-                self.setWindowTitle("五子棋 - 网络对战")
-                
-                # 禁用游戏操作按钮
-                self.undo_btn.setEnabled(False)
-                self.reset_btn.setEnabled(False)
-                self.coin_btn.setEnabled(False)
-                self.resign_btn.setEnabled(False)
             else:
                 self.signals.error_occurred.emit(f"离开观战失败: {result.get('message', '未知错误')}")
         
@@ -1998,10 +1950,22 @@ class MainWindow(QMainWindow):
     
     # ==================== 观战模式槽函数 ====================
     
-    def _enter_spectate_mode(self):
-        """进入观战模式（主线程）"""
+    def _enter_spectate_mode(self, room_id):
+        """进入观战模式（主线程）
+        Args:
+            room_id: 房间ID
+        """
         self.is_spectating = True
         self.spectate_status_frame.show()
+        
+        # 更新玩家状态显示
+        self.player_status_label.setText("观战中")
+        
+        # 隐藏我的颜色显示
+        self.my_color_label.setText("")
+        
+        # 更新窗口标题
+        self.setWindowTitle(f"五子棋 - 观战模式 - {room_id[:8]}")
         
         # 禁用游戏操作
         self.board.set_click_enabled(False)
@@ -2022,6 +1986,20 @@ class MainWindow(QMainWindow):
         """退出观战模式（主线程）"""
         self.is_spectating = False
         self.spectate_status_frame.hide()
+        
+        # 恢复玩家状态显示
+        self.player_status_label.setText("在线")
+        
+        # 重置游戏状态
+        self.game_phase = "waiting"
+        self.status_label.setText("游戏状态: 未开始")
+        self.turn_label.setText("当前: 等待开始")
+        
+        # 清空棋盘
+        self.board.clear_board()
+        
+        # 恢复窗口标题
+        self.setWindowTitle("五子棋 - 网络对战")
         
         # 恢复挑战相关按钮
         self.challenge_btn.setEnabled(True)
