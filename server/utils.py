@@ -14,12 +14,17 @@ from constants import (
     ROOM_STATUS_PLAYING,
     ROOM_STATUS_FINISHED,
     PLAYER_STATUS_IDLE,
+    PLAYER_STATUS_SPECTATING,
     RESIGN_REASON_TIMEOUT,
     RESIGN_REASON_OFFLINE,
     PLAYER_BLACK,
     PLAYER_WHITE,
     CHAT_MESSAGE_TYPE_TEXT,
     CHAT_MESSAGE_TYPE_SYSTEM,
+    CHAT_MESSAGE_TYPE_SPECTATOR_JOIN,
+    CHAT_MESSAGE_TYPE_SPECTATOR_LEAVE,
+    ROOM_VISIBILITY_PUBLIC,
+    HOT_GAME_SPECTATOR_THRESHOLD,
     CHAT_MAX_HISTORY
 )
 from util import get_timestamp, generate_id
@@ -53,6 +58,11 @@ def get_room_info(room_id, player_id=None):
     
     chat_messages = get_room_chat_messages(room_id, player_id)
     
+    spectator_count = room.get('spectator_count', 0)
+    is_hot_game = spectator_count > HOT_GAME_SPECTATOR_THRESHOLD
+    
+    spectators_info = get_room_spectators_info(room_id)
+    
     return {
         'id': room['id'],
         'name': room['name'],
@@ -64,6 +74,10 @@ def get_room_info(room_id, player_id=None):
         'player1_name': players[room['player1']]['name'] if room['player1'] in players else None,
         'player2_name': players[room['player2']]['name'] if room['player2'] in players else None,
         'status': room['status'],
+        'visibility': room.get('visibility', ROOM_VISIBILITY_PUBLIC),
+        'spectator_count': spectator_count,
+        'is_hot_game': is_hot_game,
+        'spectators': spectators_info,
         'game_state': game_state,
         'undo_request': undo_request_info,
         'chat_messages': chat_messages,
@@ -390,3 +404,185 @@ def get_room_chat_messages(room_id, player_id=None, since_id=None):
         result.append(msg_info)
     
     return result
+
+
+def get_room_spectators_info(room_id):
+    """获取房间观战者信息
+    Args:
+        room_id: 房间ID
+    Returns:
+        观战者信息列表
+    """
+    if room_id not in rooms:
+        return []
+    
+    room = rooms[room_id]
+    spectators = room.get('spectators', set())
+    
+    result = []
+    for spectator_id in spectators:
+        if spectator_id in players:
+            player = players[spectator_id]
+            result.append({
+                'id': spectator_id,
+                'name': player['name'],
+                'online': player.get('online', True)
+            })
+    
+    return result
+
+
+def is_room_player(room_id, player_id):
+    """检查玩家是否是房间的对局玩家
+    Args:
+        room_id: 房间ID
+        player_id: 玩家ID
+    Returns:
+        bool: 是否是对局玩家
+    """
+    if room_id not in rooms:
+        return False
+    
+    room = rooms[room_id]
+    return (player_id == room.get('player1') or 
+            player_id == room.get('player2') or
+            player_id == room.get('challenger_id') or
+            player_id == room.get('challenged_id'))
+
+
+def is_room_spectator(room_id, player_id):
+    """检查玩家是否是房间的观战者
+    Args:
+        room_id: 房间ID
+        player_id: 玩家ID
+    Returns:
+        bool: 是否是观战者
+    """
+    if room_id not in rooms:
+        return False
+    
+    room = rooms[room_id]
+    spectators = room.get('spectators', set())
+    return player_id in spectators
+
+
+def add_spectator(room_id, player_id):
+    """添加观战者
+    Args:
+        room_id: 房间ID
+        player_id: 玩家ID
+    Returns:
+        (success, message)
+    """
+    if room_id not in rooms:
+        return False, "房间不存在"
+    
+    if player_id not in players:
+        return False, "玩家不存在"
+    
+    room = rooms[room_id]
+    player = players[player_id]
+    
+    if is_room_player(room_id, player_id):
+        return False, "您是该房间的对局玩家，不能作为观战者加入"
+    
+    spectators = room.get('spectators', set())
+    
+    if player_id in spectators:
+        return False, "您已经在观战此对局"
+    
+    spectators.add(player_id)
+    room['spectators'] = spectators
+    room['spectator_count'] = len(spectators)
+    
+    player['status'] = PLAYER_STATUS_SPECTATING
+    player['current_room'] = room_id
+    
+    spectator_name = player['name']
+    add_chat_message(
+        room_id,
+        None,
+        CHAT_MESSAGE_TYPE_SPECTATOR_JOIN,
+        f"{spectator_name} 进入了观战",
+        {'spectator_id': player_id, 'spectator_name': spectator_name}
+    )
+    
+    return True, f"成功加入观战，当前共有 {len(spectators)} 人观战"
+
+
+def remove_spectator(room_id, player_id):
+    """移除观战者
+    Args:
+        room_id: 房间ID
+        player_id: 玩家ID
+    Returns:
+        (success, message)
+    """
+    if room_id not in rooms:
+        return False, "房间不存在"
+    
+    room = rooms[room_id]
+    spectators = room.get('spectators', set())
+    
+    if player_id not in spectators:
+        return False, "您不是该房间的观战者"
+    
+    spectators.remove(player_id)
+    room['spectators'] = spectators
+    room['spectator_count'] = len(spectators)
+    
+    if player_id in players:
+        player = players[player_id]
+        player['status'] = PLAYER_STATUS_IDLE
+        player['current_room'] = None
+        
+        spectator_name = player['name']
+        add_chat_message(
+            room_id,
+            None,
+            CHAT_MESSAGE_TYPE_SPECTATOR_LEAVE,
+            f"{spectator_name} 离开了观战",
+            {'spectator_id': player_id, 'spectator_name': spectator_name}
+        )
+    
+    return True, "成功离开观战"
+
+
+def get_public_rooms():
+    """获取公开房间列表
+    Returns:
+        公开房间列表（包含观战人数和热门标识）
+    """
+    public_rooms = []
+    
+    for room_id, room in rooms.items():
+        visibility = room.get('visibility', ROOM_VISIBILITY_PUBLIC)
+        if visibility != ROOM_VISIBILITY_PUBLIC:
+            continue
+        
+        spectator_count = room.get('spectator_count', 0)
+        is_hot_game = spectator_count > HOT_GAME_SPECTATOR_THRESHOLD
+        
+        room_info = {
+            'id': room['id'],
+            'name': room['name'],
+            'creator': room['creator'],
+            'player1': room['player1'],
+            'player2': room['player2'],
+            'player1_name': players[room['player1']]['name'] if room['player1'] in players else None,
+            'player2_name': players[room['player2']]['name'] if room['player2'] in players else None,
+            'status': room['status'],
+            'visibility': visibility,
+            'spectator_count': spectator_count,
+            'is_hot_game': is_hot_game,
+            'created_at': room['created_at'],
+            'started_at': room['started_at'],
+            'finished_at': room['finished_at'],
+            'winner': room['winner']
+        }
+        
+        public_rooms.append(room_info)
+    
+    public_rooms.sort(key=lambda x: x['spectator_count'], reverse=True)
+    
+    return public_rooms
