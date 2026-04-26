@@ -68,3 +68,10 @@ class GameSignals(QObject):
     show_resign_confirmation = pyqtSignal()
     update_countdown = pyqtSignal(int, int)
     timeout_warning = pyqtSignal(int)
+    
+    public_rooms_updated = pyqtSignal(list)
+    spectate_joined = pyqtSignal(dict)
+    spectate_left = pyqtSignal()
+    enter_spectate_mode = pyqtSignal()
+    exit_spectate_mode = pyqtSignal()
+    show_spectate_dialog = pyqtSignal()

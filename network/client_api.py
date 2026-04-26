@@ -45,3 +45,43 @@ class NetworkClient:
     def check_health(self):
         """检查服务端状态"""
         return self.get('/api/health')
+    
+    def get_public_rooms(self, status=None):
+        """获取公开房间列表
+        Args:
+            status: 筛选房间状态（可选，如 'playing'）
+        Returns:
+            (success, result)
+        """
+        params = {}
+        if status:
+            params['status'] = status
+        return self.get('/api/room/public_list', params=params)
+    
+    def join_spectate(self, player_id, room_id):
+        """加入观战
+        Args:
+            player_id: 玩家ID
+            room_id: 房间ID
+        Returns:
+            (success, result)
+        """
+        data = {
+            'player_id': player_id,
+            'room_id': room_id
+        }
+        return self.post('/api/room/spectate', data=data)
+    
+    def leave_spectate(self, player_id, room_id):
+        """离开观战
+        Args:
+            player_id: 玩家ID
+            room_id: 房间ID
+        Returns:
+            (success, result)
+        """
+        data = {
+            'player_id': player_id,
+            'room_id': room_id
+        }
+        return self.post('/api/room/leave_spectate', data=data)

@@ -15,10 +15,12 @@ from constants import (
     PLAYER_STATUS_WAITING,
     PLAYER_STATUS_CHALLENGING,
     PLAYER_STATUS_IN_GAME,
+    PLAYER_STATUS_SPECTATING,
     ROOM_STATUS_WAITING,
     ROOM_STATUS_COIN_TOSS,
     ROOM_STATUS_PLAYING,
     ROOM_STATUS_FINISHED,
+    ROOM_VISIBILITY_PUBLIC,
     CHALLENGE_STATUS_PENDING,
     CHALLENGE_STATUS_ACCEPTED,
     CHALLENGE_STATUS_DECLINED,
@@ -50,7 +52,12 @@ from server.utils import (
     cleanup_all_timeouts,
     init_room_chat,
     add_chat_message,
-    get_room_chat_messages
+    get_room_chat_messages,
+    add_spectator,
+    remove_spectator,
+    get_public_rooms,
+    is_room_player,
+    is_room_spectator
 )
 
 
@@ -347,7 +354,10 @@ def register_routes(app):
             'created_at': get_timestamp(),
             'started_at': None,
             'finished_at': None,
-            'winner': None
+            'winner': None,
+            'visibility': ROOM_VISIBILITY_PUBLIC,
+            'spectators': set(),
+            'spectator_count': 0
         }
         
         game = rooms[room_id]['game']
@@ -1052,7 +1062,10 @@ def register_routes(app):
             'created_at': get_timestamp(),
             'started_at': get_timestamp(),
             'finished_at': None,
-            'winner': None
+            'winner': None,
+            'visibility': ROOM_VISIBILITY_PUBLIC,
+            'spectators': set(),
+            'spectator_count': 0
         }
         
         players[player1_id]['status'] = PLAYER_STATUS_IN_GAME
@@ -1180,11 +1193,10 @@ def register_routes(app):
             }), 400
         
         room = rooms[room_id]
-        if player_id not in [room.get('player1'), room.get('player2'), 
-                              room.get('challenger_id'), room.get('challenged_id')]:
+        if not is_room_player(room_id, player_id) and not is_room_spectator(room_id, player_id):
             return jsonify({
                 "success": False,
-                "message": "您不是该房间的玩家"
+                "message": "您不是该房间的玩家或观战者"
             }), 400
         
         if not content.strip() and message_type == CHAT_MESSAGE_TYPE_TEXT:
@@ -1247,3 +1259,112 @@ def register_routes(app):
             "messages": messages,
             "count": len(messages)
         })
+    
+    @app.route('/api/room/public_list', methods=['GET'])
+    def get_public_rooms_api():
+        """获取公开对局列表
+        请求参数:
+            status: 筛选房间状态（可选，如 'playing'）
+        返回:
+            公开房间列表，包含观战人数和热门标识
+        """
+        status_filter = request.args.get('status')
+        
+        public_rooms = get_public_rooms()
+        
+        if status_filter:
+            public_rooms = [r for r in public_rooms if r['status'] == status_filter]
+        
+        return jsonify({
+            "success": True,
+            "rooms": public_rooms,
+            "count": len(public_rooms)
+        })
+    
+    @app.route('/api/room/spectate', methods=['POST'])
+    def join_spectate_api():
+        """加入观战
+        请求参数:
+            player_id: 玩家ID
+            room_id: 房间ID
+        """
+        data = request.get_json() or {}
+        player_id = data.get('player_id')
+        room_id = data.get('room_id')
+        
+        if not player_id or not room_id:
+            return jsonify({
+                "success": False,
+                "message": "缺少必要参数"
+            }), 400
+        
+        if player_id not in players:
+            return jsonify({
+                "success": False,
+                "message": "玩家不存在"
+            }), 400
+        
+        if room_id not in rooms:
+            return jsonify({
+                "success": False,
+                "message": "房间不存在"
+            }), 400
+        
+        room = rooms[room_id]
+        
+        if room.get('visibility') != ROOM_VISIBILITY_PUBLIC:
+            return jsonify({
+                "success": False,
+                "message": "该房间不是公开房间，无法观战"
+            }), 400
+        
+        if room['status'] == ROOM_STATUS_FINISHED:
+            return jsonify({
+                "success": False,
+                "message": "该对局已结束"
+            }), 400
+        
+        success, message = add_spectator(room_id, player_id)
+        
+        if success:
+            room_info = get_room_info(room_id, player_id)
+            return jsonify({
+                "success": True,
+                "message": message,
+                "room": room_info
+            })
+        
+        return jsonify({
+            "success": False,
+            "message": message
+        }), 400
+    
+    @app.route('/api/room/leave_spectate', methods=['POST'])
+    def leave_spectate_api():
+        """离开观战
+        请求参数:
+            player_id: 玩家ID
+            room_id: 房间ID
+        """
+        data = request.get_json() or {}
+        player_id = data.get('player_id')
+        room_id = data.get('room_id')
+        
+        if not player_id or not room_id:
+            return jsonify({
+                "success": False,
+                "message": "缺少必要参数"
+            }), 400
+        
+        success, message = remove_spectator(room_id, player_id)
+        
+        if success:
+            return jsonify({
+                "success": True,
+                "message": message
+            })
+        
+        return jsonify({
+            "success": False,
+            "message": message
+        }), 400

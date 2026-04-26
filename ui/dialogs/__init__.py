@@ -10,6 +10,7 @@ from ui.dialogs.color_choice_dialog import ColorChoiceDialog
 from ui.dialogs.player_list_dialog import PlayerListDialog
 from ui.dialogs.undo_request_dialog import UndoRequestDialog
 from ui.dialogs.challenge_list_dialog import ChallengeListDialog
+from ui.dialogs.public_rooms_dialog import PublicRoomsDialog
 
 __all__ = [
     'ChallengeDialog',
@@ -17,5 +18,6 @@ __all__ = [
     'ColorChoiceDialog',
     'PlayerListDialog',
     'UndoRequestDialog',
-    'ChallengeListDialog'
+    'ChallengeListDialog',
+    'PublicRoomsDialog'
 ]

@@ -35,7 +35,8 @@ from ui import (
     ColorChoiceDialog,
     PlayerListDialog,
     UndoRequestDialog,
-    ChallengeListDialog
+    ChallengeListDialog,
+    PublicRoomsDialog
 )
 
 # ==================== 主窗口 ====================
@@ -52,6 +53,11 @@ class MainWindow(QMainWindow):
         self.current_room_id = None
         self.my_color = None  # 1: 黑棋, 2: 白棋
         self.game_phase = "waiting"
+        
+        # 观战模式相关
+        self.is_spectating = False  # 是否处于观战模式
+        self.spectator_count = 0  # 当前观战人数
+        self.is_hot_game = False  # 是否是热门对局
         
         # 信号对象
         self.signals = GameSignals()
@@ -193,11 +199,56 @@ class MainWindow(QMainWindow):
         
         right_layout.addWidget(player_group)
         
+        # 观战模式状态栏
+        self.spectate_status_frame = QFrame()
+        self.spectate_status_frame.setFrameStyle(QFrame.StyledPanel)
+        self.spectate_status_frame.setStyleSheet("""
+            QFrame {
+                background-color: #fff3cd;
+                border: 2px solid #ffc107;
+                border-radius: 8px;
+                padding: 5px;
+            }
+        """)
+        self.spectate_status_frame.hide()
+        
+        spectate_status_layout = QHBoxLayout(self.spectate_status_frame)
+        
+        self.spectate_status_label = QLabel("👁️ 观战模式")
+        self.spectate_status_label.setFont(QFont("Arial", 12, QFont.Bold))
+        self.spectate_status_label.setStyleSheet("color: #856404;")
+        
+        self.spectate_count_label = QLabel("")
+        self.spectate_count_label.setStyleSheet("color: #856404;")
+        
+        self.leave_spectate_btn = QPushButton("离开观战")
+        self.leave_spectate_btn.clicked.connect(self.leave_spectate)
+        self.leave_spectate_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffc107;
+                color: #333;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e0a800;
+            }
+        """)
+        
+        spectate_status_layout.addWidget(self.spectate_status_label)
+        spectate_status_layout.addWidget(self.spectate_count_label)
+        spectate_status_layout.addStretch()
+        spectate_status_layout.addWidget(self.leave_spectate_btn)
+        
+        right_layout.addWidget(self.spectate_status_frame)
+        
         # 游戏控制
         game_group = QGroupBox("游戏控制")
         game_layout = QVBoxLayout(game_group)
         
-        # 第一排按钮
+        # 第一排按钮：挑战相关
         row1_layout = QHBoxLayout()
         self.challenge_btn = QPushButton("发起挑战")
         self.challenge_btn.clicked.connect(self.show_challenge_dialog)
@@ -215,7 +266,31 @@ class MainWindow(QMainWindow):
         row1_layout.addWidget(self.players_btn)
         row1_layout.addWidget(self.challenges_btn)
         
-        # 第二排按钮
+        # 观战大厅按钮
+        spectate_row_layout = QHBoxLayout()
+        self.spectate_lobby_btn = QPushButton("🎮 观战大厅")
+        self.spectate_lobby_btn.clicked.connect(self.show_spectate_lobby)
+        self.spectate_lobby_btn.setEnabled(False)
+        self.spectate_lobby_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #17a2b8;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #138496;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        
+        spectate_row_layout.addWidget(self.spectate_lobby_btn)
+        
+        # 第二排按钮：游戏操作
         row2_layout = QHBoxLayout()
         self.undo_btn = QPushButton("悔棋")
         self.undo_btn.clicked.connect(self.request_undo)
@@ -233,7 +308,7 @@ class MainWindow(QMainWindow):
         row2_layout.addWidget(self.reset_btn)
         row2_layout.addWidget(self.coin_btn)
         
-        # 第三排按钮
+        # 第三排按钮：认输
         row3_layout = QHBoxLayout()
         self.resign_btn = QPushButton("认输")
         self.resign_btn.clicked.connect(self.request_resign)
@@ -264,6 +339,7 @@ class MainWindow(QMainWindow):
         row3_layout.addStretch()
         
         game_layout.addLayout(row1_layout)
+        game_layout.addLayout(spectate_row_layout)
         game_layout.addLayout(row2_layout)
         game_layout.addLayout(row3_layout)
         
@@ -354,6 +430,12 @@ class MainWindow(QMainWindow):
         
         game_menu.addSeparator()
         
+        # 观战相关
+        spectate_lobby_action = game_menu.addAction("🎮 观战大厅")
+        spectate_lobby_action.triggered.connect(self.show_spectate_lobby)
+        
+        game_menu.addSeparator()
+        
         undo_action = game_menu.addAction("悔棋")
         undo_action.triggered.connect(self.request_undo)
         
@@ -439,6 +521,11 @@ class MainWindow(QMainWindow):
         self.signals.undo_request_expired.connect(self.on_undo_request_expired)
         self.signals.show_undo_request_dialog.connect(self._show_undo_request_dialog)
         
+        # 观战相关信号
+        self.signals.public_rooms_updated.connect(self.on_public_rooms_updated)
+        self.signals.enter_spectate_mode.connect(self._enter_spectate_mode)
+        self.signals.exit_spectate_mode.connect(self._exit_spectate_mode)
+        
     # ==================== 网络请求方法 ====================
     
     def _request(self, method, endpoint, data=None, params=None):
@@ -519,6 +606,7 @@ class MainWindow(QMainWindow):
                 self.challenge_btn.setEnabled(True)
                 self.players_btn.setEnabled(True)
                 self.challenges_btn.setEnabled(True)
+                self.spectate_lobby_btn.setEnabled(True)
                 
                 # 开始轮询
                 self.start_polling()
@@ -1505,6 +1593,31 @@ class MainWindow(QMainWindow):
         chat_messages = room.get('chat_messages', [])
         if chat_messages:
             self.signals.chat_messages_updated.emit(chat_messages)
+        
+        # 处理观战相关信息
+        if self.is_spectating:
+            spectator_count = room.get('spectator_count', 0)
+            is_hot_game = room.get('is_hot_game', False)
+            
+            self.spectator_count = spectator_count
+            self.is_hot_game = is_hot_game
+            
+            # 更新观战状态显示
+            hot_text = "🔥 热门" if is_hot_game else ""
+            self.spectate_count_label.setText(f"👥 {spectator_count}人观战 {hot_text}")
+            
+            # 观战模式下禁用所有游戏操作
+            self.board.set_click_enabled(False)
+            self.undo_btn.setEnabled(False)
+            self.reset_btn.setEnabled(False)
+            self.coin_btn.setEnabled(False)
+            self.resign_btn.setEnabled(False)
+            
+            # 观战者可以聊天
+            self.send_btn.setEnabled(True)
+            
+            # 显示观战状态
+            self.spectate_status_frame.show()
                     
     def update_turn_display(self):
         """更新回合显示"""
@@ -1727,12 +1840,218 @@ class MainWindow(QMainWindow):
             "<li>抛硬币猜先</li>"
             "<li>悔棋、重置</li>"
             "<li>游戏计时</li>"
+            "<li>观战功能</li>"
             "</ul>"
         )
+    
+    # ==================== 观战相关方法 ====================
+    
+    def show_spectate_lobby(self):
+        """显示观战大厅"""
+        if not self.player_id:
+            QMessageBox.warning(self, "提示", "请先登录！")
+            return
+        
+        self.append_log("正在获取公开对局列表...")
+        
+        def get_public_rooms_and_show():
+            success, result = self._request('GET', '/api/room/public_list')
+            if success and result.get('success'):
+                rooms = result.get('rooms', [])
+                
+                if not rooms:
+                    self.signals.message_received.emit("当前没有公开对局")
+                    return
+                
+                # 在主线程显示对话框
+                self.signals.public_rooms_updated.emit(rooms)
+            else:
+                self.signals.error_occurred.emit(f"获取公开对局列表失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=get_public_rooms_and_show, daemon=True)
+        thread.start()
+    
+    def on_public_rooms_updated(self, rooms):
+        """公开房间列表更新"""
+        if not rooms:
+            self.append_log("当前没有公开对局")
+            return
+        
+        dialog = PublicRoomsDialog(rooms, self)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            selected_room = dialog.get_selected_room()
+            if selected_room:
+                self.join_spectate(selected_room.get('id'))
+    
+    def join_spectate(self, room_id):
+        """加入观战
+        Args:
+            room_id: 房间ID
+        """
+        self.append_log(f"正在加入观战: {room_id}...")
+        
+        def do_join():
+            data = {
+                'player_id': self.player_id,
+                'room_id': room_id
+            }
+            
+            success, result = self._request('POST', '/api/room/spectate', data)
+            
+            if success and result.get('success'):
+                self.current_room_id = room_id
+                self.is_spectating = True
+                self.my_color = None  # 观战者没有棋子颜色
+                
+                self.signals.message_received.emit("✓ 成功加入观战！")
+                self.signals.message_received.emit(result.get('message', ''))
+                
+                # 更新UI状态
+                self.signals.enter_spectate_mode.emit()
+                
+                # 更新玩家状态显示
+                self.player_status_label.setText("观战中")
+                
+                # 隐藏我的颜色显示
+                self.my_color_label.setText("")
+                
+                # 禁用挑战相关按钮（观战中不能发起挑战）
+                self.challenge_btn.setEnabled(False)
+                self.players_btn.setEnabled(False)
+                self.challenges_btn.setEnabled(False)
+                
+                # 更新窗口标题
+                self.setWindowTitle(f"五子棋 - 观战模式 - {room_id[:8]}")
+                
+                # 启用聊天
+                self.send_btn.setEnabled(True)
+            else:
+                self.signals.error_occurred.emit(f"加入观战失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_join, daemon=True)
+        thread.start()
+    
+    def leave_spectate(self):
+        """离开观战"""
+        if not self.is_spectating or not self.current_room_id:
+            return
+        
+        self.append_log("正在离开观战...")
+        
+        def do_leave():
+            data = {
+                'player_id': self.player_id,
+                'room_id': self.current_room_id
+            }
+            
+            success, result = self._request('POST', '/api/room/leave_spectate', data)
+            
+            if success and result.get('success'):
+                # 重置状态
+                self.is_spectating = False
+                self.current_room_id = None
+                self.spectator_count = 0
+                self.is_hot_game = False
+                
+                self.signals.message_received.emit("✓ 已离开观战")
+                self.signals.message_received.emit(result.get('message', ''))
+                
+                # 更新UI状态
+                self.signals.exit_spectate_mode.emit()
+                
+                # 隐藏观战状态栏
+                self.spectate_status_frame.hide()
+                
+                # 恢复玩家状态显示
+                self.player_status_label.setText("在线")
+                
+                # 重置游戏状态
+                self.game_phase = "waiting"
+                self.status_label.setText("游戏状态: 未开始")
+                self.turn_label.setText("当前: 等待开始")
+                
+                # 清空棋盘
+                self.board.clear_board()
+                
+                # 恢复挑战相关按钮
+                self.challenge_btn.setEnabled(True)
+                self.players_btn.setEnabled(True)
+                self.challenges_btn.setEnabled(True)
+                
+                # 禁用聊天
+                self.send_btn.setEnabled(False)
+                
+                # 恢复窗口标题
+                self.setWindowTitle("五子棋 - 网络对战")
+                
+                # 禁用游戏操作按钮
+                self.undo_btn.setEnabled(False)
+                self.reset_btn.setEnabled(False)
+                self.coin_btn.setEnabled(False)
+                self.resign_btn.setEnabled(False)
+            else:
+                self.signals.error_occurred.emit(f"离开观战失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_leave, daemon=True)
+        thread.start()
+    
+    # ==================== 观战模式槽函数 ====================
+    
+    def _enter_spectate_mode(self):
+        """进入观战模式（主线程）"""
+        self.is_spectating = True
+        self.spectate_status_frame.show()
+        
+        # 禁用游戏操作
+        self.board.set_click_enabled(False)
+        self.undo_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
+        self.coin_btn.setEnabled(False)
+        self.resign_btn.setEnabled(False)
+        
+        # 禁用挑战相关
+        self.challenge_btn.setEnabled(False)
+        self.players_btn.setEnabled(False)
+        self.challenges_btn.setEnabled(False)
+        
+        # 启用聊天
+        self.send_btn.setEnabled(True)
+    
+    def _exit_spectate_mode(self):
+        """退出观战模式（主线程）"""
+        self.is_spectating = False
+        self.spectate_status_frame.hide()
+        
+        # 恢复挑战相关按钮
+        self.challenge_btn.setEnabled(True)
+        self.players_btn.setEnabled(True)
+        self.challenges_btn.setEnabled(True)
+        
+        # 禁用游戏操作（直到进入游戏）
+        self.board.set_click_enabled(False)
+        self.undo_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
+        self.coin_btn.setEnabled(False)
+        self.resign_btn.setEnabled(False)
+        
+        # 禁用聊天
+        self.send_btn.setEnabled(False)
         
     def closeEvent(self, event):
         """窗口关闭事件"""
         self.stop_polling()
+        
+        # 如果在观战中，先离开观战
+        if self.is_spectating and self.current_room_id:
+            try:
+                data = {
+                    'player_id': self.player_id,
+                    'room_id': self.current_room_id
+                }
+                self._request('POST', '/api/room/leave_spectate', data)
+            except:
+                pass
         
         # 如果玩家在线，尝试下线
         if self.player_id:

@@ -13,7 +13,8 @@ from ui.dialogs import (
     ColorChoiceDialog,
     PlayerListDialog,
     UndoRequestDialog,
-    ChallengeListDialog
+    ChallengeListDialog,
+    PublicRoomsDialog
 )
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     'ColorChoiceDialog',
     'PlayerListDialog',
     'UndoRequestDialog',
-    'ChallengeListDialog'
+    'ChallengeListDialog',
+    'PublicRoomsDialog'
 ]
