@@ -25,855 +25,18 @@ from PyQt5.QtGui import (
     QPixmap, QIcon, QPainterPath, QLinearGradient
 )
 
-SERVER_URL = "http://localhost:5001"
-
-# ==================== 信号类 ====================
-
-class GameSignals(QObject):
-    """游戏信号类，用于线程间通信"""
-    room_updated = pyqtSignal(dict)
-    player_list_updated = pyqtSignal(list)
-    challenge_list_updated = pyqtSignal(list)
-    message_received = pyqtSignal(str)
-    error_occurred = pyqtSignal(str)
-    game_started = pyqtSignal()
-    game_over = pyqtSignal(int)  # winner: 1=黑棋, 2=白棋
-    coin_toss_phase = pyqtSignal()
-    coin_result = pyqtSignal(str, bool)  # result, is_my_win
-    turn_changed = pyqtSignal(int)  # current player color
-    show_color_choice = pyqtSignal()  # 显示颜色选择对话框
-    
-    # 计时器相关信号
-    start_waiting_timer = pyqtSignal()
-    stop_waiting_timer = pyqtSignal()
-    start_game_timer = pyqtSignal(int)  # current_player
-    stop_game_timer = pyqtSignal()
-    reset_timer = pyqtSignal()
-    switch_timer_player = pyqtSignal()
-    
-    # 按钮状态信号
-    disable_coin_button = pyqtSignal()
-    enable_coin_button = pyqtSignal()
-    disable_undo_button = pyqtSignal()
-    enable_undo_button = pyqtSignal()
-    disable_reset_button = pyqtSignal()
-    enable_reset_button = pyqtSignal()
-    
-    # 棋盘状态信号
-    enable_board_click = pyqtSignal()
-    disable_board_click = pyqtSignal()
-    
-    # 游戏状态信号
-    update_game_phase = pyqtSignal(str)  # phase
-    update_status_label = pyqtSignal(str)  # text
-    
-    # 硬币结果详细信号
-    coin_toss_completed = pyqtSignal(dict)  # {'winner_id': str, 'coin_result': str, 'is_my_win': bool}
-    
-    # 颜色选择后信号
-    color_chosen = pyqtSignal(int)  # color (1=黑, 2=白)
-    
-    # 挑战相关信号
-    show_challenge_received = pyqtSignal(dict)  # 收到挑战
-    show_players_for_challenge = pyqtSignal(list)  # 显示可挑战的玩家
-    
-    # 对话框显示信号
-    show_player_list_dialog = pyqtSignal(list)  # 显示玩家列表对话框
-    show_challenge_list_dialog = pyqtSignal(list)  # 显示挑战列表对话框
-    
-    # 游戏状态更新信号（用于reset等操作）
-    game_reset = pyqtSignal()  # 游戏重置
-    update_my_color = pyqtSignal(int)  # 更新我的颜色显示 (1=黑, 2=白)
-    enable_game_controls = pyqtSignal()  # 启用游戏控件
-    disable_game_controls = pyqtSignal()  # 禁用游戏控件
-
-# ==================== 棋盘控件 ====================
-
-class BoardWidget(QWidget):
-    """15x15棋盘控件"""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.board_size = 15
-        self.cell_size = 35  # 每个格子大小
-        self.margin = 20      # 边距
-        self.board = [[0 for _ in range(self.board_size)] for _ in range(self.board_size)]
-        self.current_player = 1
-        self.last_move = None  # 最后落子位置 (row, col)
-        self.hover_pos = None  # 鼠标悬停位置
-        self.click_enabled = True
-        
-        # 设置最小尺寸
-        min_size = self.margin * 2 + self.cell_size * (self.board_size - 1) + 20
-        self.setMinimumSize(min_size, min_size)
-        self.setMouseTracking(True)
-        
-    def update_board(self, board_data, current_player=None, last_move=None):
-        """更新棋盘数据"""
-        self.board = [row[:] for row in board_data]
-        if current_player is not None:
-            self.current_player = current_player
-        self.last_move = last_move
-        self.update()
-        
-    def clear_board(self):
-        """清空棋盘"""
-        self.board = [[0 for _ in range(self.board_size)] for _ in range(self.board_size)]
-        self.last_move = None
-        self.update()
-        
-    def set_click_enabled(self, enabled):
-        """设置是否允许点击落子"""
-        self.click_enabled = enabled
-        
-    def paintEvent(self, event):
-        """绘制棋盘和棋子"""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        
-        # 计算棋盘的实际绘制区域（居中）
-        total_size = self.cell_size * (self.board_size - 1)
-        x_offset = (self.width() - total_size) // 2
-        y_offset = (self.height() - total_size) // 2
-        
-        # 绘制棋盘背景
-        board_rect = self.rect()
-        board_gradient = QLinearGradient(board_rect.topLeft(), board_rect.bottomRight())
-        board_gradient.setColorAt(0, QColor(245, 222, 179))  # 浅棕色
-        board_gradient.setColorAt(1, QColor(222, 184, 135))  # 深棕色
-        painter.fillRect(board_rect, board_gradient)
-        
-        # 绘制网格线
-        pen = QPen(QColor(80, 50, 20), 1)
-        painter.setPen(pen)
-        
-        for i in range(self.board_size):
-            # 水平线
-            start_x = x_offset
-            start_y = y_offset + i * self.cell_size
-            end_x = x_offset + (self.board_size - 1) * self.cell_size
-            end_y = start_y
-            painter.drawLine(start_x, start_y, end_x, end_y)
-            
-            # 垂直线
-            start_x = x_offset + i * self.cell_size
-            start_y = y_offset
-            end_x = start_x
-            end_y = y_offset + (self.board_size - 1) * self.cell_size
-            painter.drawLine(start_x, start_y, end_x, end_y)
-        
-        # 绘制天元和星位
-        star_positions = [
-            (3, 3), (3, 7), (3, 11),
-            (7, 3), (7, 7), (7, 11),
-            (11, 3), (11, 7), (11, 11)
-        ]
-        
-        star_radius = 3
-        painter.setBrush(QBrush(QColor(80, 50, 20)))
-        painter.setPen(Qt.NoPen)
-        
-        for row, col in star_positions:
-            x = x_offset + col * self.cell_size
-            y = y_offset + row * self.cell_size
-            painter.drawEllipse(x - star_radius, y - star_radius, 
-                                star_radius * 2, star_radius * 2)
-        
-        # 绘制棋子
-        piece_radius = self.cell_size // 2 - 2
-        
-        for row in range(self.board_size):
-            for col in range(self.board_size):
-                if self.board[row][col] != 0:
-                    x = x_offset + col * self.cell_size
-                    y = y_offset + row * self.cell_size
-                    
-                    # 绘制棋子阴影
-                    shadow_offset = 2
-                    if self.board[row][col] == 1:  # 黑棋
-                        shadow_color = QColor(0, 0, 0, 80)
-                    else:  # 白棋
-                        shadow_color = QColor(100, 100, 100, 60)
-                    painter.setBrush(QBrush(shadow_color))
-                    painter.drawEllipse(x - piece_radius + shadow_offset, 
-                                        y - piece_radius + shadow_offset,
-                                        piece_radius * 2, piece_radius * 2)
-                    
-                    # 绘制棋子主体
-                    if self.board[row][col] == 1:  # 黑棋
-                        gradient = QLinearGradient(
-                            x - piece_radius, y - piece_radius,
-                            x + piece_radius, y + piece_radius
-                        )
-                        gradient.setColorAt(0, QColor(80, 80, 80))
-                        gradient.setColorAt(0.5, QColor(20, 20, 20))
-                        gradient.setColorAt(1, QColor(0, 0, 0))
-                        painter.setBrush(QBrush(gradient))
-                    else:  # 白棋
-                        gradient = QLinearGradient(
-                            x - piece_radius, y - piece_radius,
-                            x + piece_radius, y + piece_radius
-                        )
-                        gradient.setColorAt(0, QColor(255, 255, 255))
-                        gradient.setColorAt(0.5, QColor(240, 240, 240))
-                        gradient.setColorAt(1, QColor(200, 200, 200))
-                        painter.setBrush(QBrush(gradient))
-                    
-                    painter.setPen(Qt.NoPen)
-                    painter.drawEllipse(x - piece_radius, y - piece_radius,
-                                        piece_radius * 2, piece_radius * 2)
-                    
-                    # 绘制棋子高光
-                    highlight_radius = piece_radius // 3
-                    highlight_offset = piece_radius // 4
-                    if self.board[row][col] == 1:  # 黑棋高光
-                        highlight_color = QColor(100, 100, 100, 120)
-                    else:  # 白棋高光
-                        highlight_color = QColor(255, 255, 255, 180)
-                    painter.setBrush(QBrush(highlight_color))
-                    painter.drawEllipse(
-                        x - piece_radius + highlight_offset,
-                        y - piece_radius + highlight_offset,
-                        highlight_radius * 2, highlight_radius * 2
-                    )
-                    
-                    # 标记最后落子位置
-                    if self.last_move == (row, col):
-                        marker_radius = 4
-                        painter.setPen(QPen(QColor(255, 0, 0), 2))
-                        painter.setBrush(Qt.NoBrush)
-                        painter.drawEllipse(x - marker_radius, y - marker_radius,
-                                            marker_radius * 2, marker_radius * 2)
-        
-        # 绘制悬停提示
-        if self.hover_pos and self.click_enabled:
-            row, col = self.hover_pos
-            if 0 <= row < self.board_size and 0 <= col < self.board_size:
-                if self.board[row][col] == 0:
-                    x = x_offset + col * self.cell_size
-                    y = y_offset + row * self.cell_size
-                    
-                    # 绘制半透明提示棋子
-                    if self.current_player == 1:  # 黑棋
-                        hover_color = QColor(0, 0, 0, 80)
-                    else:  # 白棋
-                        hover_color = QColor(255, 255, 255, 120)
-                    
-                    painter.setBrush(QBrush(hover_color))
-                    painter.setPen(Qt.NoPen)
-                    painter.drawEllipse(x - piece_radius, y - piece_radius,
-                                        piece_radius * 2, piece_radius * 2)
-        
-    def mouseMoveEvent(self, event):
-        """鼠标移动事件"""
-        if not self.click_enabled:
-            return
-            
-        # 计算棋盘的实际绘制区域
-        total_size = self.cell_size * (self.board_size - 1)
-        x_offset = (self.width() - total_size) // 2
-        y_offset = (self.height() - total_size) // 2
-        
-        # 计算鼠标对应的棋盘坐标
-        x = event.pos().x() - x_offset
-        y = event.pos().y() - y_offset
-        
-        # 四舍五入到最近的交叉点
-        col = round(x / self.cell_size)
-        row = round(y / self.cell_size)
-        
-        # 检查是否在棋盘范围内
-        if 0 <= row < self.board_size and 0 <= col < self.board_size:
-            # 检查是否接近交叉点（在半个格子范围内）
-            if abs(x - col * self.cell_size) < self.cell_size / 2 and \
-               abs(y - row * self.cell_size) < self.cell_size / 2:
-                self.hover_pos = (row, col)
-            else:
-                self.hover_pos = None
-        else:
-            self.hover_pos = None
-        
-        self.update()
-        
-    def mousePressEvent(self, event):
-        """鼠标点击事件"""
-        if not self.click_enabled or not self.hover_pos:
-            return
-            
-        if event.button() == Qt.LeftButton:
-            row, col = self.hover_pos
-            if self.board[row][col] == 0:
-                # 发出落子信号（通过父窗口处理）
-                parent = self.parent()
-                while parent:
-                    if hasattr(parent, 'on_board_clicked'):
-                        parent.on_board_clicked(row, col)
-                        break
-                    parent = parent.parent()
-
-# ==================== 计时器控件 ====================
-
-class TimerWidget(QWidget):
-    """计时器控件"""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.player1_time = 0  # 黑棋时间（秒）
-        self.player2_time = 0  # 白棋时间（秒）
-        self.current_player = 1
-        self.is_running = False
-        self.wait_time = 0  # 等待时间
-        
-        self.init_ui()
-        self.setup_timer()
-        
-    def init_ui(self):
-        """初始化UI"""
-        layout = QVBoxLayout(self)
-        
-        # 玩家时间显示
-        time_group = QGroupBox("游戏计时")
-        time_layout = QVBoxLayout(time_group)
-        
-        # 黑棋时间
-        black_frame = QFrame()
-        black_frame.setFrameStyle(QFrame.StyledPanel)
-        black_layout = QHBoxLayout(black_frame)
-        
-        black_label = QLabel("黑棋:")
-        black_label.setFont(QFont("Arial", 12, QFont.Bold))
-        black_label.setStyleSheet("color: white; background-color: black; padding: 5px; border-radius: 5px;")
-        
-        self.black_lcd = QLCDNumber(8)
-        self.black_lcd.setSegmentStyle(QLCDNumber.Flat)
-        self.black_lcd.setStyleSheet("color: black; background-color: #f0f0f0;")
-        self.black_lcd.display("00:00:00")
-        
-        black_layout.addWidget(black_label)
-        black_layout.addWidget(self.black_lcd)
-        
-        # 白棋时间
-        white_frame = QFrame()
-        white_frame.setFrameStyle(QFrame.StyledPanel)
-        white_layout = QHBoxLayout(white_frame)
-        
-        white_label = QLabel("白棋:")
-        white_label.setFont(QFont("Arial", 12, QFont.Bold))
-        white_label.setStyleSheet("color: black; background-color: white; padding: 5px; border-radius: 5px; border: 1px solid gray;")
-        
-        self.white_lcd = QLCDNumber(8)
-        self.white_lcd.setSegmentStyle(QLCDNumber.Flat)
-        self.white_lcd.setStyleSheet("color: black; background-color: #f0f0f0;")
-        self.white_lcd.display("00:00:00")
-        
-        white_layout.addWidget(white_label)
-        white_layout.addWidget(self.white_lcd)
-        
-        # 等待时间
-        wait_frame = QFrame()
-        wait_frame.setFrameStyle(QFrame.StyledPanel)
-        wait_layout = QHBoxLayout(wait_frame)
-        
-        wait_label = QLabel("等待时间:")
-        wait_label.setFont(QFont("Arial", 10))
-        
-        self.wait_lcd = QLCDNumber(8)
-        self.wait_lcd.setSegmentStyle(QLCDNumber.Flat)
-        self.wait_lcd.setStyleSheet("color: darkblue; background-color: #e0e0ff;")
-        self.wait_lcd.display("00:00:00")
-        
-        wait_layout.addWidget(wait_label)
-        wait_layout.addWidget(self.wait_lcd)
-        
-        time_layout.addWidget(black_frame)
-        time_layout.addWidget(white_frame)
-        time_layout.addWidget(wait_frame)
-        
-        layout.addWidget(time_group)
-        
-    def setup_timer(self):
-        """设置计时器"""
-        self.game_timer = QTimer(self)
-        self.game_timer.timeout.connect(self.update_game_time)
-        
-        self.wait_timer = QTimer(self)
-        self.wait_timer.timeout.connect(self.update_wait_time)
-        
-    def start_timer(self, current_player=1):
-        """开始游戏计时"""
-        self.current_player = current_player
-        self.is_running = True
-        self.game_timer.start(1000)  # 每秒更新一次
-        
-    def stop_timer(self):
-        """停止游戏计时"""
-        self.is_running = False
-        self.game_timer.stop()
-        
-    def reset_timer(self):
-        """重置计时器"""
-        self.stop_timer()
-        self.player1_time = 0
-        self.player2_time = 0
-        self.wait_time = 0
-        self.update_display()
-        
-    def update_game_time(self):
-        """更新游戏时间"""
-        if self.current_player == 1:
-            self.player1_time += 1
-        else:
-            self.player2_time += 1
-        self.update_display()
-        
-    def switch_player(self):
-        """切换当前玩家"""
-        self.current_player = 2 if self.current_player == 1 else 1
-        
-    def start_waiting(self):
-        """开始等待计时"""
-        self.wait_timer.start(1000)
-        
-    def stop_waiting(self):
-        """停止等待计时"""
-        self.wait_timer.stop()
-        
-    def update_wait_time(self):
-        """更新等待时间"""
-        self.wait_time += 1
-        self.update_display()
-        
-    def update_display(self):
-        """更新显示"""
-        # 格式化时间
-        def format_time(seconds):
-            hours = seconds // 3600
-            minutes = (seconds % 3600) // 60
-            secs = seconds % 60
-            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-        
-        self.black_lcd.display(format_time(self.player1_time))
-        self.white_lcd.display(format_time(self.player2_time))
-        self.wait_lcd.display(format_time(self.wait_time))
-        
-        # 高亮当前玩家
-        if self.current_player == 1:
-            self.black_lcd.setStyleSheet("color: red; background-color: #ffe0e0;")
-            self.white_lcd.setStyleSheet("color: black; background-color: #f0f0f0;")
-        else:
-            self.black_lcd.setStyleSheet("color: black; background-color: #f0f0f0;")
-            self.white_lcd.setStyleSheet("color: red; background-color: #ffe0e0;")
-
-# ==================== 挑战弹窗 ====================
-
-class ChallengeDialog(QDialog):
-    """挑战对话框"""
-    
-    def __init__(self, players, parent=None):
-        super().__init__(parent)
-        self.players = players
-        self.selected_player = None
-        self.init_ui()
-        
-    def init_ui(self):
-        """初始化UI"""
-        self.setWindowTitle("发起挑战")
-        self.setMinimumSize(400, 300)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f5f5f5;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #4a90d9;
-                border-radius: 8px;
-                margin-top: 12px;
-                padding-top: 12px;
-            }
-            QPushButton {
-                background-color: #4a90d9;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #357abd;
-            }
-            QPushButton:pressed {
-                background-color: #2d6899;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-            QListWidget {
-                border: 2px solid #cccccc;
-                border-radius: 5px;
-                background-color: white;
-            }
-            QListWidget::item {
-                padding: 8px;
-                border-bottom: 1px solid #eeeeee;
-            }
-            QListWidget::item:selected {
-                background-color: #4a90d9;
-                color: white;
-            }
-            QListWidget::item:hover {
-                background-color: #e8f4fc;
-            }
-        """)
-        
-        layout = QVBoxLayout(self)
-        
-        # 标题
-        title_label = QLabel("选择要挑战的玩家")
-        title_label.setFont(QFont("Arial", 14, QFont.Bold))
-        title_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title_label)
-        
-        # 玩家列表
-        player_group = QGroupBox("在线玩家")
-        player_layout = QVBoxLayout(player_group)
-        
-        self.player_list = QListWidget()
-        self.player_list.itemClicked.connect(self.on_player_selected)
-        
-        # 填充玩家列表
-        for player in self.players:
-            status_text = {
-                'idle': '空闲',
-                'waiting': '等待中',
-                'challenging': '挑战中',
-                'in_game': '游戏中'
-            }.get(player.get('status'), player.get('status'))
-            
-            can_challenge = player.get('status') == 'idle'
-            item_text = f"{player.get('name', '未知')} - {status_text}"
-            
-            item = QListWidgetItem(item_text)
-            item.setData(Qt.UserRole, player)
-            
-            if not can_challenge:
-                item.setFlags(item.flags() & ~Qt.ItemIsEnabled)
-            
-            self.player_list.addItem(item)
-        
-        player_layout.addWidget(self.player_list)
-        layout.addWidget(player_group)
-        
-        # 按钮
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
-        
-        self.ok_button = button_box.button(QDialogButtonBox.Ok)
-        self.ok_button.setText("发起挑战")
-        self.ok_button.setEnabled(False)
-        
-        layout.addWidget(button_box)
-        
-    def on_player_selected(self, item):
-        """玩家被选中"""
-        self.selected_player = item.data(Qt.UserRole)
-        self.ok_button.setEnabled(True)
-        
-    def get_selected_player(self):
-        """获取选中的玩家"""
-        return self.selected_player
-
-# ==================== 抛硬币对话框 ====================
-
-class CoinTossDialog(QDialog):
-    """抛硬币对话框"""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.selected_choice = None
-        self.init_ui()
-        
-    def init_ui(self):
-        """初始化UI"""
-        self.setWindowTitle("抛硬币猜先")
-        self.setMinimumSize(350, 250)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f5f5f5;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #ff9800;
-                border-radius: 8px;
-                margin-top: 12px;
-                padding-top: 12px;
-            }
-            QPushButton {
-                background-color: #ff9800;
-                color: white;
-                border: none;
-                padding: 10px 25px;
-                border-radius: 5px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #f57c00;
-            }
-            QRadioButton {
-                font-size: 14px;
-                padding: 8px;
-            }
-        """)
-        
-        layout = QVBoxLayout(self)
-        
-        # 标题
-        title_label = QLabel("🪙 猜硬币决定先手")
-        title_label.setFont(QFont("Arial", 16, QFont.Bold))
-        title_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title_label)
-        
-        # 说明
-        desc_label = QLabel("请选择硬币的一面，猜对者可选择执子颜色")
-        desc_label.setAlignment(Qt.AlignCenter)
-        desc_label.setWordWrap(True)
-        layout.addWidget(desc_label)
-        
-        # 选项组
-        choice_group = QGroupBox("选择硬币")
-        choice_layout = QVBoxLayout(choice_group)
-        
-        self.button_group = QButtonGroup(self)
-        
-        self.head_radio = QRadioButton("正面 (☀️)")
-        self.head_radio.setFont(QFont("Arial", 14))
-        
-        self.tail_radio = QRadioButton("反面 (🌙)")
-        self.tail_radio.setFont(QFont("Arial", 14))
-        
-        self.button_group.addButton(self.head_radio, 0)
-        self.button_group.addButton(self.tail_radio, 1)
-        
-        choice_layout.addWidget(self.head_radio)
-        choice_layout.addWidget(self.tail_radio)
-        
-        layout.addWidget(choice_group)
-        
-        # 确认按钮
-        confirm_btn = QPushButton("确认选择")
-        confirm_btn.clicked.connect(self.on_confirm)
-        layout.addWidget(confirm_btn, alignment=Qt.AlignCenter)
-        
-    def on_confirm(self):
-        """确认选择"""
-        checked_id = self.button_group.checkedId()
-        if checked_id == -1:
-            QMessageBox.warning(self, "提示", "请先选择硬币的一面！")
-            return
-        
-        self.selected_choice = checked_id
-        self.accept()
-        
-    def get_choice(self):
-        """获取选择结果"""
-        return self.selected_choice
-
-# ==================== 颜色选择对话框 ====================
-
-class ColorChoiceDialog(QDialog):
-    """颜色选择对话框"""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.selected_color = None
-        self.init_ui()
-        
-    def init_ui(self):
-        """初始化UI"""
-        self.setWindowTitle("选择执子颜色")
-        self.setMinimumSize(350, 280)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f5f5f5;
-            }
-            QGroupBox {
-                font-weight: bold;
-                border: 2px solid #4caf50;
-                border-radius: 8px;
-                margin-top: 12px;
-                padding-top: 12px;
-            }
-            QPushButton {
-                background-color: #4caf50;
-                color: white;
-                border: none;
-                padding: 10px 25px;
-                border-radius: 5px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #388e3c;
-            }
-        """)
-        
-        layout = QVBoxLayout(self)
-        
-        # 标题
-        title_label = QLabel("🎉 恭喜！您猜对了！")
-        title_label.setFont(QFont("Arial", 16, QFont.Bold))
-        title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("color: #4caf50;")
-        layout.addWidget(title_label)
-        
-        # 说明
-        desc_label = QLabel("请选择您想要执的棋子颜色")
-        desc_label.setAlignment(Qt.AlignCenter)
-        desc_label.setWordWrap(True)
-        layout.addWidget(desc_label)
-        
-        # 颜色选择
-        color_group = QGroupBox("选择颜色")
-        color_layout = QHBoxLayout(color_group)
-        
-        # 黑棋按钮
-        self.black_btn = QPushButton("⚫ 执黑棋 (先手)")
-        self.black_btn.setMinimumSize(120, 80)
-        self.black_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #333333;
-                color: white;
-                border: 3px solid #111111;
-                border-radius: 10px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #555555;
-                border-color: #333333;
-            }
-        """)
-        self.black_btn.clicked.connect(lambda: self.select_color(1))
-        
-        # 白棋按钮
-        self.white_btn = QPushButton("⚪ 执白棋 (后手)")
-        self.white_btn.setMinimumSize(120, 80)
-        self.white_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ffffff;
-                color: #333333;
-                border: 3px solid #cccccc;
-                border-radius: 10px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #f0f0f0;
-                border-color: #999999;
-            }
-        """)
-        self.white_btn.clicked.connect(lambda: self.select_color(2))
-        
-        color_layout.addWidget(self.black_btn)
-        color_layout.addWidget(self.white_btn)
-        
-        layout.addWidget(color_group)
-        
-    def select_color(self, color):
-        """选择颜色"""
-        self.selected_color = color
-        self.accept()
-        
-    def get_color(self):
-        """获取选择的颜色"""
-        return self.selected_color
-
-# ==================== 玩家列表对话框 ====================
-
-class PlayerListDialog(QDialog):
-    """玩家列表对话框"""
-    
-    def __init__(self, players, my_player_id, parent=None):
-        super().__init__(parent)
-        self.players = players
-        self.my_player_id = my_player_id
-        self.init_ui()
-        
-    def init_ui(self):
-        """初始化UI"""
-        self.setWindowTitle("在线玩家列表")
-        self.setMinimumSize(500, 400)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f5f5f5;
-            }
-            QListWidget {
-                border: 2px solid #cccccc;
-                border-radius: 5px;
-                background-color: white;
-            }
-            QListWidget::item {
-                padding: 10px;
-                border-bottom: 1px solid #eeeeee;
-            }
-        """)
-        
-        layout = QVBoxLayout(self)
-        
-        # 标题
-        title_label = QLabel(f"在线玩家 (共 {len(self.players)} 人)")
-        title_label.setFont(QFont("Arial", 14, QFont.Bold))
-        layout.addWidget(title_label)
-        
-        # 玩家列表
-        self.player_list = QListWidget()
-        
-        status_colors = {
-            'idle': '#4caf50',
-            'waiting': '#ff9800',
-            'challenging': '#9c27b0',
-            'in_game': '#f44336'
-        }
-        
-        status_names = {
-            'idle': '空闲',
-            'waiting': '等待中',
-            'challenging': '挑战中',
-            'in_game': '游戏中'
-        }
-        
-        for player in self.players:
-            is_self = player.get('id') == self.my_player_id
-            name = player.get('name', '未知') + (' (我)' if is_self else '')
-            status = player.get('status', 'unknown')
-            status_name = status_names.get(status, status)
-            status_color = status_colors.get(status, '#999999')
-            
-            item_text = f"{name} - [{status_name}]"
-            item = QListWidgetItem(item_text)
-            item.setForeground(QColor(status_color))
-            self.player_list.addItem(item)
-        
-        layout.addWidget(self.player_list)
-        
-        # 关闭按钮
-        close_btn = QPushButton("关闭")
-        close_btn.clicked.connect(self.accept)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #607d8b;
-                color: white;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #455a64;
-            }
-        """)
-        layout.addWidget(close_btn, alignment=Qt.AlignCenter)
+from constants import SERVER_URL
+from ui import (
+    BoardWidget,
+    TimerWidget,
+    GameSignals,
+    ChallengeDialog,
+    CoinTossDialog,
+    ColorChoiceDialog,
+    PlayerListDialog,
+    UndoRequestDialog,
+    ChallengeListDialog
+)
 
 # ==================== 主窗口 ====================
 
@@ -892,6 +55,15 @@ class MainWindow(QMainWindow):
         
         # 信号对象
         self.signals = GameSignals()
+        
+        # 弹窗状态跟踪（避免重复弹窗）
+        self.shown_undo_request_id = None  # 已显示的悔棋请求ID
+        self.game_over_shown = False  # 游戏结束弹窗是否已显示
+        self.pending_undo_request_id = None  # 当前待处理的悔棋请求ID
+        
+        # 认输相关
+        self.last_resign_reason = None  # 最后一次认输原因
+        self.last_move_count = 0  # 上一次的落子数，用于检测落子变化
         
         # 轮询线程
         self.polling_thread = None
@@ -1061,8 +233,39 @@ class MainWindow(QMainWindow):
         row2_layout.addWidget(self.reset_btn)
         row2_layout.addWidget(self.coin_btn)
         
+        # 第三排按钮
+        row3_layout = QHBoxLayout()
+        self.resign_btn = QPushButton("认输")
+        self.resign_btn.clicked.connect(self.request_resign)
+        self.resign_btn.setEnabled(False)
+        self.resign_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+            QPushButton:pressed {
+                background-color: #bd2130;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        
+        row3_layout.addStretch()
+        row3_layout.addWidget(self.resign_btn)
+        row3_layout.addStretch()
+        
         game_layout.addLayout(row1_layout)
         game_layout.addLayout(row2_layout)
+        game_layout.addLayout(row3_layout)
         
         right_layout.addWidget(game_group)
         
@@ -1070,25 +273,55 @@ class MainWindow(QMainWindow):
         self.timer_widget = TimerWidget()
         right_layout.addWidget(self.timer_widget)
         
-        # 消息日志
-        log_group = QGroupBox("消息日志")
-        log_layout = QVBoxLayout(log_group)
+        # 聊天系统
+        chat_group = QGroupBox("聊天")
+        chat_layout = QVBoxLayout(chat_group)
         
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(150)
-        self.log_text.setStyleSheet("""
+        self.chat_text = QTextEdit()
+        self.chat_text.setReadOnly(True)
+        self.chat_text.setMinimumHeight(120)
+        self.chat_text.setStyleSheet("""
             QTextEdit {
-                background-color: white;
+                background-color: #fafafa;
                 border: 2px solid #cccccc;
                 border-radius: 5px;
-                font-family: Consolas, Monaco, monospace;
-                font-size: 11px;
+                font-family: Arial, sans-serif;
+                font-size: 12px;
             }
         """)
         
-        log_layout.addWidget(self.log_text)
-        right_layout.addWidget(log_group)
+        chat_layout.addWidget(self.chat_text)
+        
+        # 聊天输入区域
+        input_layout = QHBoxLayout()
+        
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("输入消息...")
+        self.chat_input.setStyleSheet("""
+            QLineEdit {
+                padding: 5px;
+                border: 2px solid #cccccc;
+                border-radius: 5px;
+            }
+            QLineEdit:focus {
+                border-color: #4a90d9;
+            }
+        """)
+        self.chat_input.returnPressed.connect(self.send_chat_message)
+        
+        self.send_btn = QPushButton("发送")
+        self.send_btn.setMinimumWidth(60)
+        self.send_btn.clicked.connect(self.send_chat_message)
+        self.send_btn.setEnabled(False)
+        
+        input_layout.addWidget(self.chat_input, 3)
+        input_layout.addWidget(self.send_btn, 1)
+        
+        chat_layout.addLayout(input_layout)
+        right_layout.addWidget(chat_group)
+        
+        self.last_chat_message_id = None
+        self.chat_messages = []
         
         main_layout.addWidget(right_widget, 1)
         
@@ -1155,12 +388,14 @@ class MainWindow(QMainWindow):
         self.signals.show_color_choice.connect(self.on_show_color_choice)
         
         # 计时器相关信号
-        self.signals.start_waiting_timer.connect(self.timer_widget.start_waiting)
-        self.signals.stop_waiting_timer.connect(self.timer_widget.stop_waiting)
         self.signals.start_game_timer.connect(self.timer_widget.start_timer)
         self.signals.stop_game_timer.connect(self.timer_widget.stop_timer)
         self.signals.reset_timer.connect(self.timer_widget.reset_timer)
         self.signals.switch_timer_player.connect(self.timer_widget.switch_player)
+        
+        # 聊天相关信号
+        self.signals.chat_message_received.connect(self.on_chat_message_received)
+        self.signals.chat_messages_updated.connect(self.on_chat_messages_updated)
         
         # 按钮状态信号
         self.signals.disable_coin_button.connect(lambda: self.coin_btn.setEnabled(False))
@@ -1196,6 +431,13 @@ class MainWindow(QMainWindow):
         self.signals.update_my_color.connect(self._update_my_color)
         self.signals.enable_game_controls.connect(self._enable_game_controls)
         self.signals.disable_game_controls.connect(self._disable_game_controls)
+        
+        # 悔棋请求相关信号
+        self.signals.undo_request_received.connect(self.on_undo_request_received)
+        self.signals.undo_request_accepted.connect(self.on_undo_request_accepted)
+        self.signals.undo_request_declined.connect(self.on_undo_request_declined)
+        self.signals.undo_request_expired.connect(self.on_undo_request_expired)
+        self.signals.show_undo_request_dialog.connect(self._show_undo_request_dialog)
         
     # ==================== 网络请求方法 ====================
     
@@ -1511,32 +753,50 @@ class MainWindow(QMainWindow):
                     if resolve_success and resolve_result.get('success'):
                         coin_result = resolve_result.get('coin_result')
                         winner_id = resolve_result.get('winner_id')
+                        loser_id = resolve_result.get('loser_id')
                         winner_choice = resolve_result.get('winner_choice')
                         loser_choice = resolve_result.get('loser_choice')
+                        winner_color = resolve_result.get('winner_color', 1)
+                        loser_color = resolve_result.get('loser_color', 2)
                         
                         self.signals.message_received.emit(f"✓ 硬币结果: {coin_result}")
                         
                         is_my_win = winner_id == self.player_id
+                        
                         if is_my_win:
-                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！请选择执子颜色。")
-                            
-                            # 通过信号显示颜色选择对话框
-                            self.signals.show_color_choice.emit()
+                            # 我赢了，执黑棋
+                            self.my_color = winner_color  # 1 = 黑棋
+                            self.signals.message_received.emit(f"🎉 恭喜！您选择了{winner_choice}，猜对了！您执黑棋（先手）。")
+                            self.signals.update_my_color.emit(self.my_color)
                         else:
-                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。等待对方选择颜色...")
-                            
-                            # 通过信号启动等待计时器
-                            self.signals.start_waiting_timer.emit()
+                            # 我输了，执白棋
+                            self.my_color = loser_color  # 2 = 白棋
+                            self.signals.message_received.emit(f"对方选择了{winner_choice}，猜对了。您执白棋（后手）。")
+                            self.signals.update_my_color.emit(self.my_color)
+                        
+                        # 游戏正式开始
+                        self.signals.message_received.emit("✓ 游戏开始！黑棋先下。")
+                        
+                        # 更新游戏状态
+                        self.signals.update_game_phase.emit("playing")
+                        
+                        # 启用游戏控件
+                        self.signals.enable_game_controls.emit()
+                        
+                        # 启动游戏计时器（从黑棋开始）
+                        self.signals.start_game_timer.emit(1)
+                        
+                        # 更新回合显示
+                        self.update_turn_display()
                     else:
                         self.signals.error_occurred.emit(f"解析硬币结果失败: {resolve_result.get('message', '未知错误')}")
                 else:
-                    # 旧的逻辑：等待对方选择
+                    # 等待对方选择
                     self.signals.message_received.emit("✓ 硬币选择已提交")
                     self.signals.message_received.emit("等待对方选择...")
                     
-                    # 通过信号禁用按钮和启动等待计时器
+                    # 通过信号禁用按钮
                     self.signals.disable_coin_button.emit()
-                    self.signals.start_waiting_timer.emit()
             else:
                 self.signals.error_occurred.emit(f"提交选择失败: {result.get('message', '未知错误')}")
         
@@ -1553,9 +813,6 @@ class MainWindow(QMainWindow):
     def on_show_color_choice(self):
         """显示颜色选择对话框"""
         self.append_log("请选择执子颜色...")
-        
-        # 停止等待计时
-        self.timer_widget.stop_waiting()
         
         # 显示颜色选择对话框
         color_dialog = ColorChoiceDialog(self)
@@ -1617,7 +874,6 @@ class MainWindow(QMainWindow):
             self.signals.show_color_choice.emit()
         else:
             self.append_log(f"对方选择了{winner_choice}，猜对了。等待对方选择颜色...")
-            self.signals.start_waiting_timer.emit()
     
     def on_color_chosen(self, color):
         """颜色选择后（主线程）"""
@@ -1643,6 +899,15 @@ class MainWindow(QMainWindow):
         self.coin_btn.setEnabled(True)
         self.undo_btn.setEnabled(False)
         self.reset_btn.setEnabled(False)
+        self.resign_btn.setEnabled(False)
+        # 重置游戏结束弹窗状态
+        self.game_over_shown = False
+        # 重置悔棋请求相关状态
+        self.shown_undo_request_id = None
+        self.pending_undo_request_id = None
+        # 重置认输相关状态
+        self.last_resign_reason = None
+        self.last_move_count = 0
     
     def _enable_game_controls(self):
         """启用游戏控件（主线程）"""
@@ -1650,12 +915,88 @@ class MainWindow(QMainWindow):
         self.undo_btn.setEnabled(True)
         self.reset_btn.setEnabled(True)
         self.coin_btn.setEnabled(False)
+        self.resign_btn.setEnabled(True)
+        
+        if self.my_color:
+            self.timer_widget.set_my_color(self.my_color)
     
     def _disable_game_controls(self):
         """禁用游戏控件（主线程）"""
         self.board.set_click_enabled(False)
         self.undo_btn.setEnabled(False)
         self.reset_btn.setEnabled(False)
+        self.resign_btn.setEnabled(False)
+    
+    # ==================== 悔棋请求相关槽函数 ====================
+    
+    def on_undo_request_received(self, undo_request):
+        """收到悔棋请求"""
+        requester_name = undo_request.get('requester_name', '对手')
+        self.append_log(f"📢 {requester_name} 向您请求悔棋！")
+        
+        self.signals.show_undo_request_dialog.emit(undo_request)
+    
+    def on_undo_request_accepted(self, data):
+        """悔棋请求被接受"""
+        self.append_log("✓ 悔棋成功！对手已同意悔棋。")
+        
+        game_state = data.get('game_state', {})
+        if game_state:
+            self.signals.room_updated.emit({'game_state': game_state})
+        
+        self.signals.enable_undo_button.emit()
+        self.signals.enable_reset_button.emit()
+    
+    def on_undo_request_declined(self, data):
+        """悔棋请求被拒绝"""
+        self.append_log("✗ 对手拒绝了您的悔棋请求。")
+        self.signals.enable_undo_button.emit()
+        self.signals.enable_reset_button.emit()
+    
+    def on_undo_request_expired(self, data):
+        """悔棋请求过期"""
+        self.append_log("⏰ 悔棋请求已过期，对手未回应。")
+        self.signals.enable_undo_button.emit()
+        self.signals.enable_reset_button.emit()
+    
+    def _show_undo_request_dialog(self, undo_request):
+        """显示悔棋请求对话框（主线程）"""
+        dialog = UndoRequestDialog(undo_request, self)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            accept = dialog.get_result()
+            if accept is not None:
+                self.respond_undo_request(accept, undo_request.get('id'))
+    
+    def respond_undo_request(self, accept, undo_request_id=None):
+        """响应悔棋请求"""
+        self.append_log(f"正在{'同意' if accept else '拒绝'}悔棋请求...")
+        
+        def do_respond():
+            data = {
+                'player_id': self.player_id,
+                'room_id': self.current_room_id,
+                'accept': accept
+            }
+            
+            success, result = self._request('POST', '/api/game/undo/respond', data)
+            
+            if success and result.get('success'):
+                undo_accepted = result.get('undo_accepted', False)
+                
+                if undo_accepted:
+                    self.signals.message_received.emit("✓ 已同意悔棋请求")
+                    
+                    game_state = result.get('game_state', {})
+                    if game_state:
+                        self.signals.room_updated.emit({'game_state': game_state})
+                else:
+                    self.signals.message_received.emit("✓ 已拒绝悔棋请求")
+            else:
+                self.signals.error_occurred.emit(f"响应悔棋请求失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_respond, daemon=True)
+        thread.start()
     
     def show_players_for_challenge(self, players):
         """显示可挑战的玩家列表（主线程）"""
@@ -1741,15 +1082,28 @@ class MainWindow(QMainWindow):
             
             if success and result.get('success'):
                 room = result.get('room', {})
-                player1 = room.get('player1')
-                player2 = room.get('player2')
                 
                 # 找到另一个玩家
                 other_player_id = None
-                if player1 and player1 != self.player_id:
-                    other_player_id = player1
-                elif player2 and player2 != self.player_id:
-                    other_player_id = player2
+                
+                # 优先使用 challenger_id 和 challenged_id（新字段）
+                challenger_id = room.get('challenger_id')
+                challenged_id = room.get('challenged_id')
+                
+                if challenger_id and challenged_id:
+                    if self.player_id == challenger_id:
+                        other_player_id = challenged_id
+                    elif self.player_id == challenged_id:
+                        other_player_id = challenger_id
+                else:
+                    # 向后兼容：使用 player1 和 player2
+                    player1 = room.get('player1')
+                    player2 = room.get('player2')
+                    
+                    if player1 and player1 != self.player_id:
+                        other_player_id = player1
+                    elif player2 and player2 != self.player_id:
+                        other_player_id = player2
                 
                 if other_player_id:
                     # 确定颜色
@@ -1765,7 +1119,6 @@ class MainWindow(QMainWindow):
                         # 通过信号启用游戏控件和开始计时
                         self.signals.update_game_phase.emit("playing")
                         self.signals.enable_game_controls.emit()
-                        self.signals.stop_waiting_timer.emit()
                         self.signals.start_game_timer.emit(1)
                         
                         # 更新回合显示
@@ -1813,30 +1166,39 @@ class MainWindow(QMainWindow):
         thread.start()
         
     def request_undo(self):
-        """请求悔棋"""
+        """请求悔棋（发起悔棋请求，需要对手同意）"""
         if not self.current_room_id:
             QMessageBox.warning(self, "提示", "当前没有游戏！")
             return
-            
-        self.append_log("正在请求悔棋...")
         
-        def do_undo():
+        reply = QMessageBox.question(
+            self, "确认悔棋",
+            "确定要向对手发起悔棋请求吗？\n对手需要同意才能悔棋。",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+            
+        self.append_log("正在向对手发起悔棋请求...")
+        
+        def do_request_undo():
             data = {
                 'player_id': self.player_id,
                 'room_id': self.current_room_id
             }
             
-            success, result = self._request('POST', '/api/game/undo', data)
+            success, result = self._request('POST', '/api/game/undo/request', data)
             if success and result.get('success'):
-                self.signals.message_received.emit("✓ 悔棋成功")
+                self.signals.message_received.emit("✓ 悔棋请求已发送，等待对手同意...")
+                self.signals.message_received.emit("请等待对手回应...")
                 
-                # 更新游戏状态
-                game_state = result.get('game_state', {})
-                self.signals.room_updated.emit({'game_state': game_state})
+                self.signals.disable_undo_button.emit()
+                self.signals.disable_reset_button.emit()
             else:
-                self.signals.error_occurred.emit(f"悔棋失败: {result.get('message', '未知错误')}")
+                self.signals.error_occurred.emit(f"发起悔棋请求失败: {result.get('message', '未知错误')}")
         
-        thread = threading.Thread(target=do_undo, daemon=True)
+        thread = threading.Thread(target=do_request_undo, daemon=True)
         thread.start()
         
     def request_reset(self):
@@ -1877,6 +1239,43 @@ class MainWindow(QMainWindow):
         
         thread = threading.Thread(target=do_reset, daemon=True)
         thread.start()
+    
+    def request_resign(self):
+        """请求认输"""
+        if not self.current_room_id:
+            QMessageBox.warning(self, "提示", "当前没有游戏！")
+            return
+        
+        reply = QMessageBox.question(
+            self, "确认认输",
+            "确定要认输吗？这将直接判负，对手获胜。\n此操作不可撤销！",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+            
+        self.append_log("正在认输...")
+        
+        def do_resign():
+            data = {
+                'player_id': self.player_id,
+                'room_id': self.current_room_id
+            }
+            
+            success, result = self._request('POST', '/api/game/resign', data)
+            if success and result.get('success'):
+                self.signals.message_received.emit("✓ 认输成功")
+                self.signals.message_received.emit(result.get('message', '您已认输'))
+                
+                winner = result.get('winner')
+                if winner:
+                    self.signals.game_over.emit(winner)
+            else:
+                self.signals.error_occurred.emit(f"认输失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_resign, daemon=True)
+        thread.start()
         
     # ==================== 轮询和状态更新 ====================
     
@@ -1893,10 +1292,27 @@ class MainWindow(QMainWindow):
         """停止轮询"""
         self.running = False
         
+    def send_heartbeat(self):
+        """发送心跳包维持在线状态"""
+        if not self.player_id:
+            return
+        
+        def do_heartbeat():
+            data = {'player_id': self.player_id}
+            success, result = self._request('POST', '/api/player/heartbeat', data)
+            if not success:
+                self.append_log(f"心跳发送失败: {result}")
+        
+        thread = threading.Thread(target=do_heartbeat, daemon=True)
+        thread.start()
+        
     def polling_loop(self):
         """轮询循环"""
         while self.running:
             try:
+                # 发送心跳维持在线状态
+                self.send_heartbeat()
+                
                 # 如果有房间，获取房间信息
                 if self.current_room_id:
                     params = {
@@ -1916,6 +1332,7 @@ class MainWindow(QMainWindow):
                     
                     if success and result.get('success'):
                         challenges = result.get('challenges', [])
+                        
                         # 检查是否有新的待处理挑战
                         pending = [c for c in challenges 
                                   if c.get('status') == 'pending' 
@@ -1924,6 +1341,26 @@ class MainWindow(QMainWindow):
                             self.signals.message_received.emit(
                                 f"📢 您收到了 {len(pending)} 个新挑战！"
                             )
+                        
+                        # 检查我发起的挑战是否已被接受
+                        if not self.current_room_id:
+                            accepted = [c for c in challenges
+                                      if c.get('status') == 'accepted'
+                                      and c.get('is_my_challenge')
+                                      and c.get('room_id')]
+                            if accepted:
+                                # 挑战已被接受，获取room_id
+                                challenge = accepted[0]
+                                room_id = challenge.get('room_id')
+                                self.current_room_id = room_id
+                                
+                                self.signals.message_received.emit("✓ 您的挑战已被接受！")
+                                self.signals.message_received.emit(f"  房间ID: {room_id}")
+                                self.signals.message_received.emit("进入抛硬币阶段，请选择硬币结果")
+                                
+                                # 启用硬币按钮
+                                self.signals.enable_coin_button.emit()
+                                self.signals.update_game_phase.emit("coin_toss")
                 
                 time.sleep(2)  # 每2秒轮询一次
                 
@@ -1943,8 +1380,19 @@ class MainWindow(QMainWindow):
             
         # 更新游戏阶段
         new_phase = game_state.get('game_phase', 'waiting')
+        old_phase = self.game_phase
+        
         if new_phase != self.game_phase:
             self.game_phase = new_phase
+            
+            # 当游戏阶段从 finished 变为非 finished 时，重置游戏结束弹窗状态
+            if old_phase == 'finished' and new_phase != 'finished':
+                self.game_over_shown = False
+                self.shown_undo_request_id = None
+                self.pending_undo_request_id = None
+                self.last_resign_reason = None
+                self.last_move_count = 0
+                self.timer_widget.stop_countdown()
             
             if new_phase == 'playing':
                 self.status_label.setText("游戏状态: 游戏进行中")
@@ -1952,10 +1400,14 @@ class MainWindow(QMainWindow):
                 self.undo_btn.setEnabled(True)
                 self.reset_btn.setEnabled(True)
                 self.coin_btn.setEnabled(False)
+                self.resign_btn.setEnabled(True)
                 
-                # 如果计时器还没开始，开始计时
+                if self.my_color:
+                    self.timer_widget.set_my_color(self.my_color)
+                
+                self.send_btn.setEnabled(True)
+                
                 if not self.timer_widget.is_running:
-                    self.timer_widget.stop_waiting()
                     self.timer_widget.start_timer(game_state.get('current_player', 1))
                     
             elif new_phase == 'coin_toss':
@@ -1966,12 +1418,41 @@ class MainWindow(QMainWindow):
                 self.status_label.setText("游戏状态: 等待开始")
                 self.board.set_click_enabled(False)
                 
+            elif new_phase == 'finished':
+                self.status_label.setText("游戏状态: 已结束")
+                self.timer_widget.stop_countdown()
+        
+        # 游戏进行中时更新倒计时
+        if new_phase == 'playing':
+            current_player = game_state.get('current_player', 1)
+            time_since_last_move = game_state.get('time_since_last_move', 0)
+            move_count = game_state.get('move_count', 0)
+            
+            # 检测落子数变化，重置倒计时
+            if move_count != self.last_move_count:
+                self.last_move_count = move_count
+                # 落子变化，重置倒计时
+                self.timer_widget.start_countdown(current_player)
+            else:
+                # 继续倒计时，计算剩余时间
+                from constants import MOVE_TIMEOUT_SECONDS
+                remaining = max(0, MOVE_TIMEOUT_SECONDS - time_since_last_move)
+                # 只有当倒计时没在运行时才启动，或者同步时间
+                if not self.timer_widget.countdown_running:
+                    self.timer_widget.start_countdown(current_player, remaining)
+                else:
+                    # 同步显示
+                    if self.timer_widget.current_player != current_player:
+                        self.timer_widget.start_countdown(current_player, remaining)
+        
         # 更新回合显示
         self.update_turn_display()
         
-        # 检查游戏是否结束
-        if game_state.get('game_over'):
+        # 检查游戏是否结束（只弹窗一次）
+        if game_state.get('game_over') and not self.game_over_shown:
             winner = game_state.get('winner')
+            self.last_resign_reason = game_state.get('resign_reason')
+            self.game_over_shown = True  # 标记已显示游戏结束弹窗
             self.signals.game_over.emit(winner)
             
         # 更新我的颜色
@@ -1983,6 +1464,47 @@ class MainWindow(QMainWindow):
                     self.my_color_label.setText("⚫ 执黑棋")
                 else:
                     self.my_color_label.setText("⚪ 执白棋")
+                self.timer_widget.set_my_color(self.my_color)
+        
+        # 处理悔棋请求
+        undo_request = room.get('undo_request')
+        if undo_request:
+            is_requested_to_me = undo_request.get('is_requested_to_me', False)
+            is_my_request = undo_request.get('is_my_request', False)
+            status = undo_request.get('status')
+            undo_request_id = undo_request.get('id')
+            
+            # 我是被请求方，且请求状态为 pending
+            if is_requested_to_me and status == 'pending':
+                # 只有当请求ID与已显示的不同时才触发弹窗（避免重复弹窗）
+                if undo_request_id != self.shown_undo_request_id:
+                    self.shown_undo_request_id = undo_request_id
+                    self.pending_undo_request_id = undo_request_id
+                    self.signals.undo_request_received.emit(undo_request)
+            
+            # 我是发起方，检查请求状态变化
+            elif is_my_request:
+                # 如果请求已被处理（accepted/declined/expired），且之前是 pending 状态
+                if status in ['accepted', 'declined', 'expired']:
+                    if self.pending_undo_request_id == undo_request_id:
+                        # 重置待处理请求状态
+                        self.pending_undo_request_id = None
+                        # 触发对应信号
+                        if status == 'accepted':
+                            self.signals.undo_request_accepted.emit(undo_request)
+                        elif status == 'declined':
+                            self.signals.undo_request_declined.emit(undo_request)
+                        elif status == 'expired':
+                            self.signals.undo_request_expired.emit(undo_request)
+        
+        # 如果没有悔棋请求了，重置已显示的请求ID
+        else:
+            self.shown_undo_request_id = None
+        
+        # 处理聊天消息
+        chat_messages = room.get('chat_messages', [])
+        if chat_messages:
+            self.signals.chat_messages_updated.emit(chat_messages)
                     
     def update_turn_display(self):
         """更新回合显示"""
@@ -2013,36 +1535,177 @@ class MainWindow(QMainWindow):
             else:
                 self.turn_label.setText(f"当前: {current_name}的回合")
                 self.turn_label.setStyleSheet("color: #4a90d9; font-weight: bold;")
+                self.board.set_click_enabled(False)  # 禁用棋盘点击
                 
     def on_game_over(self, winner):
         """游戏结束"""
         self.timer_widget.stop_timer()
+        self.timer_widget.stop_countdown()
         self.board.set_click_enabled(False)
         self.game_phase = "finished"
         self.status_label.setText("游戏状态: 已结束")
         
+        self.undo_btn.setEnabled(False)
+        self.reset_btn.setEnabled(False)
+        self.resign_btn.setEnabled(False)
+        
         winner_name = "黑棋" if winner == 1 else "白棋"
         is_my_win = (winner == self.my_color)
         
+        resign_reason = self.last_resign_reason
+        
+        reason_text = ""
+        log_suffix = ""
+        
+        if resign_reason == 'user':
+            if is_my_win:
+                reason_text = "对手主动认输"
+            else:
+                reason_text = "您主动认输"
+            log_suffix = "（认输）"
+        elif resign_reason == 'timeout':
+            if is_my_win:
+                reason_text = "对手超时未下子"
+            else:
+                reason_text = "您超时未下子"
+            log_suffix = "（超时）"
+        elif resign_reason == 'offline':
+            if is_my_win:
+                reason_text = "对手已离线"
+            else:
+                reason_text = "您已离线"
+            log_suffix = "（离线）"
+        
         if is_my_win:
-            message = f"🎉 恭喜！您获胜了！\n\n{winner_name}获胜！"
+            if reason_text:
+                message = f"🎉 恭喜！您获胜了！\n\n{reason_text}\n{winner_name}获胜！"
+            else:
+                message = f"🎉 恭喜！您获胜了！\n\n{winner_name}获胜！"
         else:
-            message = f"😢 您输了...\n\n{winner_name}获胜！"
+            if reason_text:
+                message = f"😢 您输了...\n\n{reason_text}\n{winner_name}获胜！"
+            else:
+                message = f"😢 您输了...\n\n{winner_name}获胜！"
             
-        self.append_log(f"★ 游戏结束！{winner_name}获胜！ ★")
+        self.append_log(f"★ 游戏结束！{winner_name}获胜！{log_suffix} ★")
         
         QMessageBox.information(self, "游戏结束", message)
         
+    # ==================== 聊天相关方法 ====================
+    
+    def send_chat_message(self):
+        """发送聊天消息"""
+        message = self.chat_input.text().strip()
+        if not message:
+            return
+        
+        if not self.current_room_id:
+            QMessageBox.warning(self, "提示", "当前没有游戏房间，无法发送消息！")
+            return
+        
+        self.chat_input.clear()
+        
+        def do_send():
+            data = {
+                'player_id': self.player_id,
+                'room_id': self.current_room_id,
+                'content': message
+            }
+            
+            success, result = self._request('POST', '/api/chat/send', data)
+            if success and result.get('success'):
+                chat_message = result.get('chat_message', {})
+                chat_message['is_my_message'] = True
+                self.signals.chat_message_received.emit(chat_message)
+            else:
+                self.append_log(f"发送消息失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_send, daemon=True)
+        thread.start()
+    
+    def on_chat_message_received(self, message):
+        """收到聊天消息"""
+        if message.get('id') not in [m.get('id') for m in self.chat_messages]:
+            self.chat_messages.append(message)
+            self.append_chat_message(message)
+    
+    def on_chat_messages_updated(self, messages):
+        """聊天消息列表更新"""
+        for msg in messages:
+            if msg.get('id') not in [m.get('id') for m in self.chat_messages]:
+                self.chat_messages.append(msg)
+                self.append_chat_message(msg)
+        
+        if messages:
+            self.last_chat_message_id = messages[-1].get('id')
+    
+    def append_chat_message(self, message):
+        """添加聊天消息到显示"""
+        timestamp = datetime.fromtimestamp(message.get('timestamp', datetime.now().timestamp())).strftime("%H:%M:%S")
+        msg_type = message.get('type', 'text')
+        is_my = message.get('is_my_message', False)
+        player_name = message.get('player_name', '系统')
+        content = message.get('content', '')
+        
+        formatted_msg = ""
+        
+        if msg_type == 'system':
+            formatted_msg = f'<div style="color: #888888; font-style: italic; text-align: left; margin: 5px 0;">' \
+                           f'<span style="font-weight: bold;">[系统]</span> ' \
+                           f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
+                           f'&nbsp;&nbsp;{content}</div>'
+        elif msg_type == 'move':
+            formatted_msg = f'<div style="color: #6666cc; margin: 3px 0; text-align: left;">' \
+                           f'<span style="font-weight: bold;">[系统]</span> ' \
+                           f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
+                           f'&nbsp;&nbsp;{content}</div>'
+        elif msg_type == 'undo':
+            formatted_msg = f'<div style="color: #cc6666; margin: 3px 0; text-align: left;">' \
+                           f'<span style="font-weight: bold;">[系统]</span> ' \
+                           f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
+                           f'&nbsp;&nbsp;{content}</div>'
+        elif msg_type == 'resign':
+            formatted_msg = f'<div style="color: #cc3333; margin: 3px 0; text-align: left;">' \
+                           f'<span style="font-weight: bold;">[系统]</span> ' \
+                           f'<span style="color: #999999;">[{timestamp}]</span><br/>' \
+                           f'&nbsp;&nbsp;{content}</div>'
+        else:
+            if is_my:
+                formatted_msg = f'<div style="text-align: left; margin: 5px 0;">' \
+                               f'<span style="font-weight: bold; color: #4a90d9;">我</span> ' \
+                               f'<span style="color: #999999; font-size: 10px;">[{timestamp}]</span><br/>' \
+                               f'<span style="background-color: #4a90d9; color: white; padding: 5px 10px; ' \
+                               f'border-radius: 10px; display: inline-block; margin-top: 2px; ' \
+                               f'max-width: 80%; word-wrap: break-word;">{content}</span></div>'
+            else:
+                formatted_msg = f'<div style="text-align: left; margin: 5px 0;">' \
+                               f'<span style="font-weight: bold; color: #555555;">{player_name}</span> ' \
+                               f'<span style="color: #999999; font-size: 10px;">[{timestamp}]</span><br/>' \
+                               f'<span style="background-color: #e8e8e8; color: #333333; padding: 5px 10px; ' \
+                               f'border-radius: 10px; display: inline-block; margin-top: 2px; ' \
+                               f'max-width: 80%; word-wrap: break-word;">{content}</span></div>'
+        
+        cursor = self.chat_text.textCursor()
+        cursor.movePosition(cursor.End)
+        cursor.insertHtml(formatted_msg + '<br/>')
+        
+        scrollbar = self.chat_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+    
     # ==================== 辅助方法 ====================
     
     def append_log(self, message):
-        """添加日志消息"""
+        """添加日志消息（同时显示为系统聊天消息）"""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        log_message = f"[{timestamp}] {message}"
-        self.log_text.append(log_message)
-        # 自动滚动到底部
-        scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        
+        chat_msg = {
+            'id': f'log_{int(datetime.now().timestamp() * 1000000)}',
+            'type': 'system',
+            'content': message,
+            'timestamp': datetime.now().timestamp(),
+            'is_my_message': False
+        }
+        self.append_chat_message(chat_msg)
         
     def show_error(self, message):
         """显示错误消息"""
@@ -2080,145 +1743,6 @@ class MainWindow(QMainWindow):
                 pass
         
         event.accept()
-
-
-# ==================== 挑战列表对话框 ====================
-
-class ChallengeListDialog(QDialog):
-    """挑战列表对话框"""
-    
-    def __init__(self, challenges, parent=None):
-        super().__init__(parent)
-        self.challenges = challenges
-        self.result_action = None
-        self.result_challenge_id = None
-        self.init_ui()
-        
-    def init_ui(self):
-        """初始化UI"""
-        self.setWindowTitle("我的挑战列表")
-        self.setMinimumSize(600, 400)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f5f5f5;
-            }
-            QListWidget {
-                border: 2px solid #cccccc;
-                border-radius: 5px;
-                background-color: white;
-            }
-            QListWidget::item {
-                padding: 12px;
-                border-bottom: 1px solid #eeeeee;
-            }
-            QPushButton {
-                background-color: #4a90d9;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #357abd;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-        """)
-        
-        layout = QVBoxLayout(self)
-        
-        # 标题
-        title_label = QLabel(f"挑战列表 (共 {len(self.challenges)} 条)")
-        title_label.setFont(QFont("Arial", 14, QFont.Bold))
-        layout.addWidget(title_label)
-        
-        # 挑战列表
-        self.challenge_list = QListWidget()
-        self.challenge_list.itemClicked.connect(self.on_challenge_selected)
-        
-        status_names = {
-            'pending': '待处理',
-            'accepted': '已接受',
-            'declined': '已拒绝',
-            'expired': '已过期'
-        }
-        
-        for challenge in self.challenges:
-            is_my = challenge.get('is_my_challenge', False)
-            challenge_type = "我发起的" if is_my else "收到的"
-            opponent = challenge.get('challenged_name') if is_my else challenge.get('challenger_name')
-            status = challenge.get('status', 'unknown')
-            status_name = status_names.get(status, status)
-            
-            # 只有待处理且不是我发起的挑战可以操作
-            can_accept = status == 'pending' and not is_my
-            
-            item_text = f"[{challenge_type}] 对方: {opponent} - 状态: {status_name}"
-            item = QListWidgetItem(item_text)
-            item.setData(Qt.UserRole, challenge)
-            
-            if can_accept:
-                item.setForeground(QColor('#4caf50'))  # 绿色表示可操作
-            
-            self.challenge_list.addItem(item)
-        
-        layout.addWidget(self.challenge_list)
-        
-        # 操作按钮
-        btn_layout = QHBoxLayout()
-        
-        self.accept_btn = QPushButton("接受挑战")
-        self.accept_btn.clicked.connect(self.accept_challenge)
-        self.accept_btn.setEnabled(False)
-        
-        self.decline_btn = QPushButton("拒绝挑战")
-        self.decline_btn.clicked.connect(self.decline_challenge)
-        self.decline_btn.setEnabled(False)
-        
-        self.close_btn = QPushButton("关闭")
-        self.close_btn.clicked.connect(self.reject)
-        
-        btn_layout.addWidget(self.accept_btn)
-        btn_layout.addWidget(self.decline_btn)
-        btn_layout.addStretch()
-        btn_layout.addWidget(self.close_btn)
-        
-        layout.addLayout(btn_layout)
-        
-    def on_challenge_selected(self, item):
-        """挑战被选中"""
-        challenge = item.data(Qt.UserRole)
-        status = challenge.get('status')
-        is_my = challenge.get('is_my_challenge')
-        
-        # 只有待处理且不是我发起的挑战可以操作
-        can_operate = status == 'pending' and not is_my
-        self.accept_btn.setEnabled(can_operate)
-        self.decline_btn.setEnabled(can_operate)
-        
-    def accept_challenge(self):
-        """接受挑战"""
-        current_item = self.challenge_list.currentItem()
-        if current_item:
-            challenge = current_item.data(Qt.UserRole)
-            self.result_action = 'accept'
-            self.result_challenge_id = challenge.get('id')
-            self.accept()
-            
-    def decline_challenge(self):
-        """拒绝挑战"""
-        current_item = self.challenge_list.currentItem()
-        if current_item:
-            challenge = current_item.data(Qt.UserRole)
-            self.result_action = 'decline'
-            self.result_challenge_id = challenge.get('id')
-            self.accept()
-            
-    def get_result(self):
-        """获取结果"""
-        return self.result_action, self.result_challenge_id
 
 
 # ==================== 主函数 ====================
