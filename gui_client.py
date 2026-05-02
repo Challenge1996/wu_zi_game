@@ -36,7 +36,9 @@ from ui import (
     PlayerListDialog,
     UndoRequestDialog,
     ChallengeListDialog,
-    PublicRoomsDialog
+    PublicRoomsDialog,
+    GameHistoryDialog,
+    GameReplayDialog
 )
 
 # ==================== 主窗口 ====================
@@ -223,6 +225,32 @@ class MainWindow(QMainWindow):
         self.stats_layout.addRow("胜率:", self.win_rate_label)
         self.stats_layout.addRow("当前连胜:", self.current_streak_label)
         self.stats_layout.addRow("最高连胜:", self.max_streak_label)
+        
+        history_btn_layout = QHBoxLayout()
+        self.history_btn = QPushButton("📋 历史记录")
+        self.history_btn.clicked.connect(self.show_game_history)
+        self.history_btn.setEnabled(False)
+        self.history_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+            }
+        """)
+        history_btn_layout.addStretch()
+        history_btn_layout.addWidget(self.history_btn)
+        history_btn_layout.addStretch()
+        
+        self.stats_layout.addRow(history_btn_layout)
         
         right_layout.addWidget(self.stats_group)
         
@@ -637,6 +665,7 @@ class MainWindow(QMainWindow):
                 self.players_btn.setEnabled(True)
                 self.challenges_btn.setEnabled(True)
                 self.spectate_lobby_btn.setEnabled(True)
+                self.history_btn.setEnabled(True)
                 
                 # 获取并更新战绩统计
                 self.update_player_stats()
@@ -1860,6 +1889,64 @@ class MainWindow(QMainWindow):
         """显示错误消息"""
         self.append_log(f"✗ {message}")
         QMessageBox.critical(self, "错误", message)
+        
+    def show_game_history(self):
+        """显示历史对局记录"""
+        if not self.player_id:
+            QMessageBox.warning(self, "提示", "请先登录！")
+            return
+        
+        self.append_log("正在获取历史对局记录...")
+        
+        def get_records_and_show():
+            success, result = self._request('GET', '/api/player/game_records', params={'player_id': self.player_id})
+            
+            if success and result.get('success'):
+                records = result.get('records', [])
+                
+                if not records:
+                    self.signals.message_received.emit("暂无历史对局记录")
+                    return
+                
+                self._show_game_history_dialog(records)
+            else:
+                self.signals.error_occurred.emit(f"获取历史记录失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=get_records_and_show, daemon=True)
+        thread.start()
+    
+    def _show_game_history_dialog(self, records):
+        """显示历史记录对话框（主线程）"""
+        dialog = GameHistoryDialog(records, self)
+        
+        while True:
+            if dialog.exec_() == QDialog.Accepted:
+                selected_record = dialog.get_selected_record()
+                if selected_record:
+                    record_id = selected_record.get('id')
+                    self._start_replay(record_id)
+            else:
+                break
+    
+    def _start_replay(self, record_id):
+        """开始复盘指定的游戏记录"""
+        self.append_log(f"正在获取对局详情: {record_id}...")
+        
+        def get_record_and_replay():
+            success, result = self._request('GET', '/api/game/record', 
+                params={'record_id': record_id, 'player_id': self.player_id})
+            
+            if success and result.get('success'):
+                record = result.get('record', {})
+                self.signals.message_received.emit("✓ 开始复盘...")
+                
+                replay_dialog = GameReplayDialog(record, self)
+                replay_dialog.exec_()
+            else:
+                self.signals.error_occurred.emit(f"获取对局详情失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=get_record_and_replay, daemon=True)
+        thread.start()
         
     def show_about(self):
         """显示关于对话框"""

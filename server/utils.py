@@ -33,7 +33,7 @@ from constants import (
     SCORE_DRAW
 )
 from util import get_timestamp, generate_id
-from server.data_store import players, rooms, undo_requests, challenges, chat_messages
+from server.data_store import players, rooms, undo_requests, challenges, chat_messages, game_records
 
 
 def get_player_info(player_id):
@@ -682,3 +682,170 @@ def update_game_stats(room_id, winner_id):
         # 平局
         update_player_stats(player1_id, 'draw')
         update_player_stats(player2_id, 'draw')
+
+
+def create_game_record(room_id):
+    """创建游戏历史记录
+    Args:
+        room_id: 房间ID
+    Returns:
+        游戏记录ID（如果成功创建），否则返回None
+    """
+    if room_id not in rooms:
+        return None
+    
+    room = rooms[room_id]
+    game = room.get('game')
+    
+    if not game:
+        return None
+    
+    player1_id = room.get('player1')
+    player2_id = room.get('player2')
+    
+    if not player1_id or not player2_id:
+        return None
+    
+    player1_name = players[player1_id]['name'] if player1_id in players else None
+    player2_name = players[player2_id]['name'] if player2_id in players else None
+    
+    winner_color = room.get('winner')
+    winner_id = None
+    
+    if winner_color == PLAYER_BLACK:
+        winner_id = player1_id
+    elif winner_color == PLAYER_WHITE:
+        winner_id = player2_id
+    
+    now = get_timestamp()
+    record_id = generate_id()
+    
+    game_record = {
+        'id': record_id,
+        'room_id': room_id,
+        'room_name': room.get('name'),
+        
+        'player1_id': player1_id,
+        'player1_name': player1_name,
+        'player2_id': player2_id,
+        'player2_name': player2_name,
+        
+        'player1_color': PLAYER_BLACK,
+        'player2_color': PLAYER_WHITE,
+        
+        'winner_color': winner_color,
+        'winner_id': winner_id,
+        
+        'created_at': room.get('created_at', now),
+        'started_at': room.get('started_at', now),
+        'finished_at': room.get('finished_at', now),
+        
+        'move_history': game.move_history[:],
+        'total_moves': len(game.move_history),
+        
+        'game_over': game.game_over,
+        'resign_reason': game.resign_reason,
+        
+    }
+    
+    game_records[record_id] = game_record
+    
+    for player_id in [player1_id, player2_id]:
+        if player_id not in players:
+            continue
+        
+        player = players[player_id]
+        if 'game_record_ids' not in player:
+            player['game_record_ids'] = []
+        
+        if record_id not in player['game_record_ids']:
+            player['game_record_ids'].append(record_id)
+    
+    return record_id
+
+
+def get_game_record(record_id):
+    """获取游戏记录详情
+    Args:
+        record_id: 游戏记录ID
+    Returns:
+        游戏记录对象，不存在返回None
+    """
+    if record_id not in game_records:
+        return None
+    
+    record = game_records[record_id]
+    
+    return {
+        'id': record['id'],
+        'room_id': record.get('room_id'),
+        'room_name': record.get('room_name'),
+        
+        'player1_id': record.get('player1_id'),
+        'player1_name': record.get('player1_name'),
+        'player2_id': record.get('player2_id'),
+        'player2_name': record.get('player2_name'),
+        
+        'player1_color': record.get('player1_color'),
+        'player2_color': record.get('player2_color'),
+        
+        'winner_color': record.get('winner_color'),
+        'winner_id': record.get('winner_id'),
+        
+        'created_at': record.get('created_at'),
+        'started_at': record.get('started_at'),
+        'finished_at': record.get('finished_at'),
+        
+        'move_history': record.get('move_history', []),
+        'total_moves': record.get('total_moves', 0),
+        
+        'game_over': record.get('game_over', False),
+        'resign_reason': record.get('resign_reason')
+    }
+
+
+def get_player_game_records(player_id):
+    """获取玩家的历史对局记录列表
+    Args:
+        player_id: 玩家ID
+    Returns:
+        游戏记录列表（简要信息）
+    """
+    if player_id not in players:
+        return []
+    
+    player = players[player_id]
+    record_ids = player.get('game_record_ids', [])
+    
+    records = []
+    for record_id in reversed(record_ids):
+        if record_id not in game_records:
+            continue
+        
+        record = game_records[record_id]
+        is_winner = (record.get('winner_id') == player_id)
+        
+        opponent_name = None
+        if player_id == record.get('player1_id'):
+            opponent_name = record.get('player2_name')
+        else:
+            opponent_name = record.get('player1_name')
+        
+        my_color = None
+        if player_id == record.get('player1_id'):
+            my_color = record.get('player1_color')
+        else:
+            my_color = record.get('player2_color')
+        
+        records.append({
+            'id': record['id'],
+            'room_name': record.get('room_name'),
+            'opponent_name': opponent_name,
+            'my_color': my_color,
+            'is_winner': is_winner,
+            'total_moves': record.get('total_moves', 0),
+            'resign_reason': record.get('resign_reason'),
+            'finished_at': record.get('finished_at')
+        })
+    
+    return records

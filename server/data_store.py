@@ -9,3 +9,4 @@ rooms = {}
 challenges = {}
 undo_requests = {}
 chat_messages = {}
+game_records = {}

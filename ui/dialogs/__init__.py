@@ -11,6 +11,8 @@ from ui.dialogs.player_list_dialog import PlayerListDialog
 from ui.dialogs.undo_request_dialog import UndoRequestDialog
 from ui.dialogs.challenge_list_dialog import ChallengeListDialog
 from ui.dialogs.public_rooms_dialog import PublicRoomsDialog
+from ui.dialogs.game_history_dialog import GameHistoryDialog
+from ui.dialogs.game_replay_dialog import GameReplayDialog
 
 __all__ = [
     'ChallengeDialog',
@@ -19,5 +21,7 @@ __all__ = [
     'PlayerListDialog',
     'UndoRequestDialog',
     'ChallengeListDialog',
-    'PublicRoomsDialog'
+    'PublicRoomsDialog',
+    'GameHistoryDialog',
+    'GameReplayDialog'
 ]

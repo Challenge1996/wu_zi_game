@@ -14,7 +14,9 @@ from ui.dialogs import (
     PlayerListDialog,
     UndoRequestDialog,
     ChallengeListDialog,
-    PublicRoomsDialog
+    PublicRoomsDialog,
+    GameHistoryDialog,
+    GameReplayDialog
 )
 
 __all__ = [
@@ -27,5 +29,7 @@ __all__ = [
     'PlayerListDialog',
     'UndoRequestDialog',
     'ChallengeListDialog',
-    'PublicRoomsDialog'
+    'PublicRoomsDialog',
+    'GameHistoryDialog',
+    'GameReplayDialog'
 ]

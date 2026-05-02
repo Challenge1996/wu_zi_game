@@ -63,7 +63,10 @@ from server.utils import (
     get_public_rooms,
     is_room_player,
     is_room_spectator,
-    update_game_stats
+    update_game_stats,
+    create_game_record,
+    get_game_record,
+    get_player_game_records
 )
 
 
@@ -178,6 +181,13 @@ def register_routes(app):
                 elif room['winner'] == PLAYER_WHITE:
                     winner_id = room.get('player2')
                 update_game_stats(room_id, winner_id)
+                
+                # 创建游戏历史记录
+                game = room.get('game')
+                if game:
+                    game.game_over = True
+                    game.resign_reason = RESIGN_REASON_OFFLINE
+                create_game_record(room_id)
         
         players[player_id]['current_room'] = None
         
@@ -777,6 +787,9 @@ def register_routes(app):
             elif winner_color == PLAYER_WHITE:
                 winner_id = room.get('player2')
             update_game_stats(room_id, winner_id)
+            
+            # 创建游戏历史记录
+            record_id = create_game_record(room_id)
         
         state = game.get_game_state(player_id)
         
@@ -1220,6 +1233,9 @@ def register_routes(app):
                 winner_id = room.get('player2')
             update_game_stats(room_id, winner_id)
             
+            # 创建游戏历史记录
+            record_id = create_game_record(room_id)
+            
             return jsonify({
                 "success": True,
                 "message": message,
@@ -1445,3 +1461,62 @@ def register_routes(app):
             "success": False,
             "message": message
         }), 400
+    
+    @app.route('/api/player/game_records', methods=['GET'])
+    def get_player_game_records_api():
+        """获取玩家的历史对局记录列表
+        请求参数:
+            player_id: 玩家ID
+        """
+        player_id = request.args.get('player_id')
+        
+        if not player_id or player_id not in players:
+            return jsonify({
+                "success": False,
+                "message": "玩家不存在"
+            }), 400
+        
+        records = get_player_game_records(player_id)
+        
+        return jsonify({
+            "success": True,
+            "player_id": player_id,
+            "records": records,
+            "count": len(records)
+        })
+    
+    @app.route('/api/game/record', methods=['GET'])
+    def get_game_record_api():
+        """获取单条游戏记录的详细信息（含完整走棋历史）
+        请求参数:
+            record_id: 游戏记录ID
+            player_id: 玩家ID（可选，用于权限验证）
+        """
+        record_id = request.args.get('record_id')
+        player_id = request.args.get('player_id')
+        
+        if not record_id:
+            return jsonify({
+                "success": False,
+                "message": "缺少record_id参数"
+            }), 400
+        
+        record = get_game_record(record_id)
+        
+        if not record:
+            return jsonify({
+                "success": False,
+                "message": "游戏记录不存在"
+            }), 404
+        
+        if player_id:
+            if player_id not in [record.get('player1_id'), record.get('player2_id')]:
+                return jsonify({
+                    "success": False,
+                    "message": "您没有权限查看此对局记录"
+                }), 403
+        
+        return jsonify({
+            "success": True,
+            "record": record
+        })

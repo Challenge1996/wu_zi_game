@@ -352,3 +352,25 @@ class ClientCore:
             GAME_PHASE_PLAYING: '游戏进行中'
         }
         return phase_names.get(phase, phase)
+    
+    def get_my_game_records(self):
+        """获取我的历史对局记录列表"""
+        if not self.player_id:
+            return False, "请先登录"
+        
+        params = {'player_id': self.player_id}
+        return self._request('GET', '/api/player/game_records', params=params)
+    
+    def get_game_record_detail(self, record_id):
+        """获取单条游戏记录的详细信息（含走棋历史）
+        Args:
+            record_id: 游戏记录ID
+        """
+        if not self.player_id:
+            return False, "请先登录"
+        
+        params = {
+            'record_id': record_id,
+            'player_id': self.player_id
+        }
+        return self._request('GET', '/api/game/record', params=params)
