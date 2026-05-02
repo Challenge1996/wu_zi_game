@@ -584,6 +584,10 @@ class MainWindow(QMainWindow):
         # 战绩统计信号
         self.signals.player_stats_updated.connect(self.on_player_stats_updated)
         
+        # 历史记录相关信号
+        self.signals.game_records_loaded.connect(self._show_game_history_dialog)
+        self.signals.show_game_replay.connect(self._show_replay_dialog)
+        
     # ==================== 网络请求方法 ====================
     
     def _request(self, method, endpoint, data=None, params=None):
@@ -1908,7 +1912,7 @@ class MainWindow(QMainWindow):
                     self.signals.message_received.emit("暂无历史对局记录")
                     return
                 
-                self._show_game_history_dialog(records)
+                self.signals.game_records_loaded.emit(records)
             else:
                 self.signals.error_occurred.emit(f"获取历史记录失败: {result.get('message', '未知错误')}")
         
@@ -1940,13 +1944,17 @@ class MainWindow(QMainWindow):
                 record = result.get('record', {})
                 self.signals.message_received.emit("✓ 开始复盘...")
                 
-                replay_dialog = GameReplayDialog(record, self)
-                replay_dialog.exec_()
+                self.signals.show_game_replay.emit(record)
             else:
                 self.signals.error_occurred.emit(f"获取对局详情失败: {result.get('message', '未知错误')}")
         
         thread = threading.Thread(target=get_record_and_replay, daemon=True)
         thread.start()
+    
+    def _show_replay_dialog(self, record):
+        """显示复盘对话框（主线程）"""
+        replay_dialog = GameReplayDialog(record, self)
+        replay_dialog.exec_()
         
     def show_about(self):
         """显示关于对话框"""
