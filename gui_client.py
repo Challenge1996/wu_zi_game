@@ -199,6 +199,31 @@ class MainWindow(QMainWindow):
         
         right_layout.addWidget(player_group)
         
+        # 战绩统计面板
+        self.stats_group = QGroupBox("战绩统计")
+        self.stats_layout = QFormLayout(self.stats_group)
+        
+        self.rank_label = QLabel("新手")
+        self.rank_label.setFont(QFont("Arial", 12, QFont.Bold))
+        self.rank_label.setStyleSheet("color: #4a90d9;")
+        
+        self.score_label = QLabel("0")
+        self.total_games_label = QLabel("0")
+        self.wins_label = QLabel("0")
+        self.win_rate_label = QLabel("0.0%")
+        self.current_streak_label = QLabel("0")
+        self.max_streak_label = QLabel("0")
+        
+        self.stats_layout.addRow("段位:", self.rank_label)
+        self.stats_layout.addRow("积分:", self.score_label)
+        self.stats_layout.addRow("总对局:", self.total_games_label)
+        self.stats_layout.addRow("胜场:", self.wins_label)
+        self.stats_layout.addRow("胜率:", self.win_rate_label)
+        self.stats_layout.addRow("当前连胜:", self.current_streak_label)
+        self.stats_layout.addRow("最高连胜:", self.max_streak_label)
+        
+        right_layout.addWidget(self.stats_group)
+        
         # 观战模式状态栏
         self.spectate_status_frame = QFrame()
         self.spectate_status_frame.setFrameStyle(QFrame.StyledPanel)
@@ -607,6 +632,9 @@ class MainWindow(QMainWindow):
                 self.players_btn.setEnabled(True)
                 self.challenges_btn.setEnabled(True)
                 self.spectate_lobby_btn.setEnabled(True)
+                
+                # 获取并更新战绩统计
+                self.update_player_stats()
                 
                 # 开始轮询
                 self.start_polling()
@@ -1702,6 +1730,9 @@ class MainWindow(QMainWindow):
             
         self.append_log(f"★ 游戏结束！{winner_name}获胜！{log_suffix} ★")
         
+        # 更新战绩统计
+        self.update_player_stats()
+        
         QMessageBox.information(self, "游戏结束", message)
         
     # ==================== 聊天相关方法 ====================
@@ -1994,6 +2025,35 @@ class MainWindow(QMainWindow):
                 self.signals.error_occurred.emit(f"离开观战失败: {result.get('message', '未知错误')}")
         
         thread = threading.Thread(target=do_leave, daemon=True)
+        thread.start()
+    
+    def update_player_stats(self):
+        """更新玩家战绩统计"""
+        if not self.player_id:
+            return
+        
+        def do_update():
+            success, result = self._request('GET', '/api/player/stats', params={'player_id': self.player_id})
+            
+            if success and result.get('success'):
+                stats = result.get('stats', {})
+                
+                # 主线程更新UI
+                def update_ui():
+                    self.rank_label.setText(stats.get('rank', '新手'))
+                    self.score_label.setText(str(stats.get('score', 0)))
+                    self.total_games_label.setText(str(stats.get('total_games', 0)))
+                    self.wins_label.setText(str(stats.get('wins', 0)))
+                    self.win_rate_label.setText(f"{stats.get('win_rate', 0.0)}%")
+                    self.current_streak_label.setText(str(stats.get('current_streak', 0)))
+                    self.max_streak_label.setText(str(stats.get('max_streak', 0)))
+                
+                from PyQt5.QtCore import QMetaObject, Qt
+                QMetaObject.invokeMethod(self, "update_ui", Qt.QueuedConnection, fn=update_ui)
+            else:
+                self.signals.error_occurred.emit(f"获取战绩失败: {result.get('message', '未知错误')}")
+        
+        thread = threading.Thread(target=do_update, daemon=True)
         thread.start()
     
     # ==================== 观战模式槽函数 ====================

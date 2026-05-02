@@ -85,3 +85,13 @@ class NetworkClient:
             'room_id': room_id
         }
         return self.post('/api/room/leave_spectate', data=data)
+    
+    def get_player_stats(self, player_id):
+        """获取玩家战绩和积分
+        Args:
+            player_id: 玩家ID
+        Returns:
+            (success, result)
+        """
+        params = {'player_id': player_id}
+        return self.get('/api/player/stats', params=params)

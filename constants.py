@@ -72,3 +72,44 @@ PLAYER_STATUS_SPECTATING = 'spectating'
 
 CHAT_MESSAGE_TYPE_SPECTATOR_JOIN = 'spectator_join'
 CHAT_MESSAGE_TYPE_SPECTATOR_LEAVE = 'spectator_leave'
+
+# 战绩和积分系统
+RANK_NEWBIE = '新手'
+RANK_IRON = '黑铁'
+RANK_BRONZE = '青铜'
+RANK_SILVER = '白银'
+RANK_GOLD = '黄金'
+RANK_PLATINUM = '铂金'
+RANK_DIAMOND = '钻石'
+RANK_MASTER = '星耀'
+RANK_KING = '王者'
+
+RANK_LIST = [
+    RANK_NEWBIE,
+    RANK_IRON,
+    RANK_BRONZE,
+    RANK_SILVER,
+    RANK_GOLD,
+    RANK_PLATINUM,
+    RANK_DIAMOND,
+    RANK_MASTER,
+    RANK_KING
+]
+
+# 各段位的积分阈值（达到该积分升级）
+RANK_THRESHOLDS = {
+    RANK_NEWBIE: 0,
+    RANK_IRON: 1,
+    RANK_BRONZE: 5,
+    RANK_SILVER: 10,
+    RANK_GOLD: 20,
+    RANK_PLATINUM: 35,
+    RANK_DIAMOND: 55,
+    RANK_MASTER: 80,
+    RANK_KING: 110
+}
+
+# 积分变动规则
+SCORE_WIN = 1     # 胜一局+1
+SCORE_LOSE = -1   # 负一局-1
+SCORE_DRAW = 0    # 平局不变

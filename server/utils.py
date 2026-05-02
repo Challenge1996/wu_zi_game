@@ -25,7 +25,12 @@ from constants import (
     CHAT_MESSAGE_TYPE_SPECTATOR_LEAVE,
     ROOM_VISIBILITY_PUBLIC,
     HOT_GAME_SPECTATOR_THRESHOLD,
-    CHAT_MAX_HISTORY
+    CHAT_MAX_HISTORY,
+    RANK_LIST,
+    RANK_THRESHOLDS,
+    SCORE_WIN,
+    SCORE_LOSE,
+    SCORE_DRAW
 )
 from util import get_timestamp, generate_id
 from server.data_store import players, rooms, undo_requests, challenges, chat_messages
@@ -586,3 +591,94 @@ def get_public_rooms():
     public_rooms.sort(key=lambda x: x['spectator_count'], reverse=True)
     
     return public_rooms
+
+
+def calculate_rank(score):
+    """根据积分计算段位
+    Args:
+        score: 玩家积分
+    Returns:
+        段位名称
+    """
+    for rank in reversed(RANK_LIST):
+        if score >= RANK_THRESHOLDS.get(rank, 0):
+            return rank
+    return RANK_LIST[0]
+
+
+def update_player_stats(player_id, result):
+    """更新玩家战绩统计
+    Args:
+        player_id: 玩家ID
+        result: 结果 ('win', 'lose', 'draw')
+    """
+    if player_id not in players:
+        return
+    
+    player = players[player_id]
+    if 'stats' not in player:
+        # 初始化战绩数据（为了兼容旧数据）
+        player['stats'] = {
+            'total_games': 0,
+            'wins': 0,
+            'losses': 0,
+            'draws': 0,
+            'win_rate': 0.0,
+            'current_streak': 0,
+            'max_streak': 0,
+            'score': 0,
+            'rank': RANK_LIST[0]
+        }
+    
+    stats = player['stats']
+    stats['total_games'] += 1
+    
+    if result == 'win':
+        stats['wins'] += 1
+        stats['current_streak'] += 1
+        stats['score'] += SCORE_WIN
+        if stats['current_streak'] > stats['max_streak']:
+            stats['max_streak'] = stats['current_streak']
+    elif result == 'lose':
+        stats['losses'] += 1
+        stats['current_streak'] = 0
+        stats['score'] += SCORE_LOSE
+    elif result == 'draw':
+        stats['draws'] += 1
+        stats['current_streak'] = 0
+        stats['score'] += SCORE_DRAW
+    
+    # 计算胜率
+    if stats['total_games'] > 0:
+        stats['win_rate'] = round(stats['wins'] / stats['total_games'] * 100, 1)
+    
+    # 更新段位
+    stats['rank'] = calculate_rank(stats['score'])
+
+
+def update_game_stats(room_id, winner_id):
+    """更新游戏结束后的战绩统计
+    Args:
+        room_id: 房间ID
+        winner_id: 获胜者ID（None表示平局）
+    """
+    if room_id not in rooms:
+        return
+    
+    room = rooms[room_id]
+    player1_id = room.get('player1')
+    player2_id = room.get('player2')
+    
+    if not player1_id or not player2_id:
+        return
+    
+    if winner_id == player1_id:
+        update_player_stats(player1_id, 'win')
+        update_player_stats(player2_id, 'lose')
+    elif winner_id == player2_id:
+        update_player_stats(player2_id, 'win')
+        update_player_stats(player1_id, 'lose')
+    else:
+        # 平局
+        update_player_stats(player1_id, 'draw')
+        update_player_stats(player2_id, 'draw')

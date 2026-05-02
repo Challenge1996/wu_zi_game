@@ -37,7 +37,12 @@ from constants import (
     CHAT_MESSAGE_TYPE_SYSTEM,
     CHAT_MESSAGE_TYPE_MOVE,
     CHAT_MESSAGE_TYPE_UNDO,
-    CHAT_MESSAGE_TYPE_RESIGN
+    CHAT_MESSAGE_TYPE_RESIGN,
+    RANK_NEWBIE,
+    RANK_THRESHOLDS,
+    SCORE_WIN,
+    SCORE_LOSE,
+    SCORE_DRAW
 )
 from util import get_timestamp, generate_id
 from game import WuziqiGame
@@ -57,7 +62,8 @@ from server.utils import (
     remove_spectator,
     get_public_rooms,
     is_room_player,
-    is_room_spectator
+    is_room_spectator,
+    update_game_stats
 )
 
 
@@ -92,7 +98,19 @@ def register_routes(app):
             'status': PLAYER_STATUS_IDLE,
             'current_room': None,
             'last_heartbeat': now,
-            'registered_at': now
+            'registered_at': now,
+            # 战绩统计
+            'stats': {
+                'total_games': 0,       # 总对局数
+                'wins': 0,              # 胜场数
+                'losses': 0,             # 负场数
+                'draws': 0,              # 平局数
+                'win_rate': 0.0,         # 胜率
+                'current_streak': 0,     # 当前连胜
+                'max_streak': 0,         # 最高连胜
+                'score': 0,              # 积分
+                'rank': RANK_NEWBIE      # 段位
+            }
         }
         
         return jsonify({
@@ -152,12 +170,54 @@ def register_routes(app):
                 if other_player_id in players:
                     players[other_player_id]['status'] = PLAYER_STATUS_IDLE
                     players[other_player_id]['current_room'] = None
+                
+                # 更新战绩统计
+                winner_id = None
+                if room['winner'] == PLAYER_BLACK:
+                    winner_id = room.get('player1')
+                elif room['winner'] == PLAYER_WHITE:
+                    winner_id = room.get('player2')
+                update_game_stats(room_id, winner_id)
         
         players[player_id]['current_room'] = None
         
         return jsonify({
             "success": True,
             "message": "玩家已下线"
+        })
+    
+    @app.route('/api/player/stats', methods=['GET'])
+    def get_player_stats():
+        """获取玩家战绩和积分
+        请求参数:
+            player_id: 玩家ID
+        """
+        player_id = request.args.get('player_id')
+        
+        if not player_id or player_id not in players:
+            return jsonify({
+                "success": False,
+                "message": "玩家不存在"
+            }), 400
+        
+        player = players[player_id]
+        stats = player.get('stats', {
+            'total_games': 0,
+            'wins': 0,
+            'losses': 0,
+            'draws': 0,
+            'win_rate': 0.0,
+            'current_streak': 0,
+            'max_streak': 0,
+            'score': 0,
+            'rank': RANK_NEWBIE
+        })
+        
+        return jsonify({
+            "success": True,
+            "player_id": player_id,
+            "player_name": player['name'],
+            "stats": stats
         })
 
     @app.route('/api/player/list', methods=['GET'])
@@ -709,6 +769,14 @@ def register_routes(app):
                 f"游戏结束！{winner_name}获胜！",
                 {'winner': winner_color}
             )
+            
+            # 更新战绩统计
+            winner_id = None
+            if winner_color == PLAYER_BLACK:
+                winner_id = room.get('player1')
+            elif winner_color == PLAYER_WHITE:
+                winner_id = room.get('player2')
+            update_game_stats(room_id, winner_id)
         
         state = game.get_game_state(player_id)
         
@@ -1142,6 +1210,15 @@ def register_routes(app):
                 f"{player_name} 认输了！",
                 {'winner': game.get_winner()}
             )
+            
+            # 更新战绩统计
+            winner_color = game.get_winner()
+            winner_id = None
+            if winner_color == PLAYER_BLACK:
+                winner_id = room.get('player1')
+            elif winner_color == PLAYER_WHITE:
+                winner_id = room.get('player2')
+            update_game_stats(room_id, winner_id)
             
             return jsonify({
                 "success": True,
