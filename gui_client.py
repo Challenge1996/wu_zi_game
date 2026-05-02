@@ -210,6 +210,7 @@ class MainWindow(QMainWindow):
         self.score_label = QLabel("0")
         self.total_games_label = QLabel("0")
         self.wins_label = QLabel("0")
+        self.losses_label = QLabel("0")
         self.win_rate_label = QLabel("0.0%")
         self.current_streak_label = QLabel("0")
         self.max_streak_label = QLabel("0")
@@ -218,6 +219,7 @@ class MainWindow(QMainWindow):
         self.stats_layout.addRow("积分:", self.score_label)
         self.stats_layout.addRow("总对局:", self.total_games_label)
         self.stats_layout.addRow("胜场:", self.wins_label)
+        self.stats_layout.addRow("负场:", self.losses_label)
         self.stats_layout.addRow("胜率:", self.win_rate_label)
         self.stats_layout.addRow("当前连胜:", self.current_streak_label)
         self.stats_layout.addRow("最高连胜:", self.max_streak_label)
@@ -550,6 +552,9 @@ class MainWindow(QMainWindow):
         self.signals.public_rooms_updated.connect(self.on_public_rooms_updated)
         self.signals.enter_spectate_mode.connect(self._enter_spectate_mode)
         self.signals.exit_spectate_mode.connect(self._exit_spectate_mode)
+        
+        # 战绩统计信号
+        self.signals.player_stats_updated.connect(self.on_player_stats_updated)
         
     # ==================== 网络请求方法 ====================
     
@@ -2037,24 +2042,30 @@ class MainWindow(QMainWindow):
             
             if success and result.get('success'):
                 stats = result.get('stats', {})
-                
-                # 主线程更新UI
-                def update_ui():
-                    self.rank_label.setText(stats.get('rank', '新手'))
-                    self.score_label.setText(str(stats.get('score', 0)))
-                    self.total_games_label.setText(str(stats.get('total_games', 0)))
-                    self.wins_label.setText(str(stats.get('wins', 0)))
-                    self.win_rate_label.setText(f"{stats.get('win_rate', 0.0)}%")
-                    self.current_streak_label.setText(str(stats.get('current_streak', 0)))
-                    self.max_streak_label.setText(str(stats.get('max_streak', 0)))
-                
-                from PyQt5.QtCore import QMetaObject, Qt
-                QMetaObject.invokeMethod(self, "update_ui", Qt.QueuedConnection, fn=update_ui)
+                # 使用信号在主线程更新UI
+                self.signals.player_stats_updated.emit(stats)
             else:
                 self.signals.error_occurred.emit(f"获取战绩失败: {result.get('message', '未知错误')}")
         
         thread = threading.Thread(target=do_update, daemon=True)
         thread.start()
+    
+    def on_player_stats_updated(self, stats):
+        """战绩统计更新（主线程）
+        Args:
+            stats: 战绩统计数据字典
+        """
+        if not stats:
+            return
+        
+        self.rank_label.setText(stats.get('rank', '新手'))
+        self.score_label.setText(str(stats.get('score', 0)))
+        self.total_games_label.setText(str(stats.get('total_games', 0)))
+        self.wins_label.setText(str(stats.get('wins', 0)))
+        self.losses_label.setText(str(stats.get('losses', 0)))
+        self.win_rate_label.setText(f"{stats.get('win_rate', 0.0)}%")
+        self.current_streak_label.setText(str(stats.get('current_streak', 0)))
+        self.max_streak_label.setText(str(stats.get('max_streak', 0)))
     
     # ==================== 观战模式槽函数 ====================
     

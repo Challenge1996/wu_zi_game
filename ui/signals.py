@@ -75,3 +75,4 @@ class GameSignals(QObject):
     enter_spectate_mode = pyqtSignal()
     exit_spectate_mode = pyqtSignal()
     show_spectate_dialog = pyqtSignal()
+    player_stats_updated = pyqtSignal(dict)
