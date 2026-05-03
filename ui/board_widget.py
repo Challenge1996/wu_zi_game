@@ -3,6 +3,7 @@ from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import (
     QPainter, QColor, QPen, QBrush, QFont, QLinearGradient
 )
+from constants import BOARD_SIZE, PLAYER_BLACK, PLAYER_WHITE
 
 
 class BoardWidget(QWidget):
@@ -10,16 +11,15 @@ class BoardWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.board_size = 15
-        self.cell_size = 35  # 每个格子大小
-        self.margin = 20      # 边距
+        self.board_size = BOARD_SIZE
+        self.cell_size = 35
+        self.margin = 20
         self.board = [[0 for _ in range(self.board_size)] for _ in range(self.board_size)]
-        self.current_player = 1
-        self.last_move = None  # 最后落子位置 (row, col)
-        self.hover_pos = None  # 鼠标悬停位置
+        self.current_player = PLAYER_BLACK
+        self.last_move = None
+        self.hover_pos = None
         self.click_enabled = True
         
-        # 设置最小尺寸
         min_size = self.margin * 2 + self.cell_size * (self.board_size - 1) + 20
         self.setMinimumSize(min_size, min_size)
         self.setMouseTracking(True)
@@ -47,38 +47,32 @@ class BoardWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # 计算棋盘的实际绘制区域（居中）
         total_size = self.cell_size * (self.board_size - 1)
         x_offset = (self.width() - total_size) // 2
         y_offset = (self.height() - total_size) // 2
         
-        # 绘制棋盘背景
         board_rect = self.rect()
         board_gradient = QLinearGradient(board_rect.topLeft(), board_rect.bottomRight())
-        board_gradient.setColorAt(0, QColor(245, 222, 179))  # 浅棕色
-        board_gradient.setColorAt(1, QColor(222, 184, 135))  # 深棕色
+        board_gradient.setColorAt(0, QColor(245, 222, 179))
+        board_gradient.setColorAt(1, QColor(222, 184, 135))
         painter.fillRect(board_rect, board_gradient)
         
-        # 绘制网格线
         pen = QPen(QColor(80, 50, 20), 1)
         painter.setPen(pen)
         
         for i in range(self.board_size):
-            # 水平线
             start_x = x_offset
             start_y = y_offset + i * self.cell_size
             end_x = x_offset + (self.board_size - 1) * self.cell_size
             end_y = start_y
             painter.drawLine(start_x, start_y, end_x, end_y)
             
-            # 垂直线
             start_x = x_offset + i * self.cell_size
             start_y = y_offset
             end_x = start_x
             end_y = y_offset + (self.board_size - 1) * self.cell_size
             painter.drawLine(start_x, start_y, end_x, end_y)
         
-        # 绘制天元和星位
         star_positions = [
             (3, 3), (3, 7), (3, 11),
             (7, 3), (7, 7), (7, 11),
@@ -95,7 +89,6 @@ class BoardWidget(QWidget):
             painter.drawEllipse(x - star_radius, y - star_radius, 
                                 star_radius * 2, star_radius * 2)
         
-        # 绘制棋子
         piece_radius = self.cell_size // 2 - 2
         
         for row in range(self.board_size):
@@ -104,19 +97,17 @@ class BoardWidget(QWidget):
                     x = x_offset + col * self.cell_size
                     y = y_offset + row * self.cell_size
                     
-                    # 绘制棋子阴影
                     shadow_offset = 2
-                    if self.board[row][col] == 1:  # 黑棋
+                    if self.board[row][col] == PLAYER_BLACK:
                         shadow_color = QColor(0, 0, 0, 80)
-                    else:  # 白棋
+                    else:
                         shadow_color = QColor(100, 100, 100, 60)
                     painter.setBrush(QBrush(shadow_color))
                     painter.drawEllipse(x - piece_radius + shadow_offset, 
                                         y - piece_radius + shadow_offset,
                                         piece_radius * 2, piece_radius * 2)
                     
-                    # 绘制棋子主体
-                    if self.board[row][col] == 1:  # 黑棋
+                    if self.board[row][col] == PLAYER_BLACK:
                         gradient = QLinearGradient(
                             x - piece_radius, y - piece_radius,
                             x + piece_radius, y + piece_radius
@@ -125,7 +116,7 @@ class BoardWidget(QWidget):
                         gradient.setColorAt(0.5, QColor(20, 20, 20))
                         gradient.setColorAt(1, QColor(0, 0, 0))
                         painter.setBrush(QBrush(gradient))
-                    else:  # 白棋
+                    else:
                         gradient = QLinearGradient(
                             x - piece_radius, y - piece_radius,
                             x + piece_radius, y + piece_radius
@@ -139,12 +130,11 @@ class BoardWidget(QWidget):
                     painter.drawEllipse(x - piece_radius, y - piece_radius,
                                         piece_radius * 2, piece_radius * 2)
                     
-                    # 绘制棋子高光
                     highlight_radius = piece_radius // 3
                     highlight_offset = piece_radius // 4
-                    if self.board[row][col] == 1:  # 黑棋高光
+                    if self.board[row][col] == PLAYER_BLACK:
                         highlight_color = QColor(100, 100, 100, 120)
-                    else:  # 白棋高光
+                    else:
                         highlight_color = QColor(255, 255, 255, 180)
                     painter.setBrush(QBrush(highlight_color))
                     painter.drawEllipse(
@@ -153,7 +143,6 @@ class BoardWidget(QWidget):
                         highlight_radius * 2, highlight_radius * 2
                     )
                     
-                    # 标记最后落子位置
                     if self.last_move == (row, col):
                         marker_radius = 4
                         painter.setPen(QPen(QColor(255, 0, 0), 2))
@@ -161,7 +150,6 @@ class BoardWidget(QWidget):
                         painter.drawEllipse(x - marker_radius, y - marker_radius,
                                             marker_radius * 2, marker_radius * 2)
         
-        # 绘制悬停提示
         if self.hover_pos and self.click_enabled:
             row, col = self.hover_pos
             if 0 <= row < self.board_size and 0 <= col < self.board_size:
@@ -169,10 +157,9 @@ class BoardWidget(QWidget):
                     x = x_offset + col * self.cell_size
                     y = y_offset + row * self.cell_size
                     
-                    # 绘制半透明提示棋子
-                    if self.current_player == 1:  # 黑棋
+                    if self.current_player == PLAYER_BLACK:
                         hover_color = QColor(0, 0, 0, 80)
-                    else:  # 白棋
+                    else:
                         hover_color = QColor(255, 255, 255, 120)
                     
                     painter.setBrush(QBrush(hover_color))
@@ -185,22 +172,17 @@ class BoardWidget(QWidget):
         if not self.click_enabled:
             return
             
-        # 计算棋盘的实际绘制区域
         total_size = self.cell_size * (self.board_size - 1)
         x_offset = (self.width() - total_size) // 2
         y_offset = (self.height() - total_size) // 2
         
-        # 计算鼠标对应的棋盘坐标
         x = event.pos().x() - x_offset
         y = event.pos().y() - y_offset
         
-        # 四舍五入到最近的交叉点
         col = round(x / self.cell_size)
         row = round(y / self.cell_size)
         
-        # 检查是否在棋盘范围内
         if 0 <= row < self.board_size and 0 <= col < self.board_size:
-            # 检查是否接近交叉点（在半个格子范围内）
             if abs(x - col * self.cell_size) < self.cell_size / 2 and \
                abs(y - row * self.cell_size) < self.cell_size / 2:
                 self.hover_pos = (row, col)
@@ -219,7 +201,6 @@ class BoardWidget(QWidget):
         if event.button() == Qt.LeftButton:
             row, col = self.hover_pos
             if self.board[row][col] == 0:
-                # 发出落子信号（通过父窗口处理）
                 parent = self.parent()
                 while parent:
                     if hasattr(parent, 'on_board_clicked'):
