@@ -830,6 +830,9 @@ def register_routes(app):
             
             # 创建游戏历史记录
             record_id = create_game_record(room_id)
+            
+            # 同步房间状态到数据库
+            sync_room(room_id)
         
         state = game.get_game_state(player_id)
         
@@ -1286,6 +1289,9 @@ def register_routes(app):
             
             # 创建游戏历史记录
             record_id = create_game_record(room_id)
+            
+            # 同步房间状态到数据库
+            sync_room(room_id)
             
             return jsonify({
                 "success": True,

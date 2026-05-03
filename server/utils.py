@@ -208,6 +208,29 @@ def check_move_timeout(room):
                 server.players[room['player2']]['status'] = PLAYER_STATUS_IDLE
                 server.players[room['player2']]['current_room'] = None
             
+            winner_color = game.get_winner()
+            winner_name = "黑棋" if winner_color == PLAYER_BLACK else "白棋"
+            loser_name = "白棋" if winner_color == PLAYER_BLACK else "黑棋"
+            
+            add_chat_message(
+                room['id'],
+                None,
+                CHAT_MESSAGE_TYPE_SYSTEM,
+                f"{loser_name}超时未下子，{winner_name}获胜！",
+                {'winner': winner_color, 'resign_reason': RESIGN_REASON_TIMEOUT}
+            )
+            
+            winner_id = None
+            if winner_color == PLAYER_BLACK:
+                winner_id = room.get('player1')
+            elif winner_color == PLAYER_WHITE:
+                winner_id = room.get('player2')
+            update_game_stats(room['id'], winner_id)
+            
+            create_game_record(room['id'])
+            
+            sync_room(room['id'])
+            
             return True, message
     
     return False, None
@@ -268,6 +291,20 @@ def check_player_offline(room):
             server.players[player2_id]['status'] = PLAYER_STATUS_IDLE
             server.players[player2_id]['current_room'] = None
         
+        add_chat_message(
+            room['id'],
+            None,
+            CHAT_MESSAGE_TYPE_SYSTEM,
+            "双方玩家均已离线，游戏结束（平局）",
+            {'winner': None, 'resign_reason': RESIGN_REASON_OFFLINE}
+        )
+        
+        update_game_stats(room['id'], None)
+        
+        create_game_record(room['id'])
+        
+        sync_room(room['id'])
+        
         return True, "双方玩家均已离线，游戏结束"
     
     if player1_offline:
@@ -286,6 +323,31 @@ def check_player_offline(room):
                     server.players[player2_id]['status'] = PLAYER_STATUS_IDLE
                     server.players[player2_id]['current_room'] = None
                 
+                winner_color = game.get_winner()
+                winner_name = "黑棋" if winner_color == PLAYER_BLACK else "白棋"
+                loser_name = "黑棋" if winner_color == PLAYER_WHITE else "白棋"
+                
+                player1_name = server.players[player1_id]['name'] if player1_id in server.players else '玩家1'
+                
+                add_chat_message(
+                    room['id'],
+                    None,
+                    CHAT_MESSAGE_TYPE_SYSTEM,
+                    f"{player1_name}（{loser_name}）离线，{winner_name}获胜！",
+                    {'winner': winner_color, 'resign_reason': RESIGN_REASON_OFFLINE}
+                )
+                
+                winner_id = None
+                if winner_color == PLAYER_BLACK:
+                    winner_id = room.get('player1')
+                elif winner_color == PLAYER_WHITE:
+                    winner_id = room.get('player2')
+                update_game_stats(room['id'], winner_id)
+                
+                create_game_record(room['id'])
+                
+                sync_room(room['id'])
+                
                 return True, message
     
     if player2_offline:
@@ -303,6 +365,31 @@ def check_player_offline(room):
                 if player2_id in server.players:
                     server.players[player2_id]['status'] = PLAYER_STATUS_IDLE
                     server.players[player2_id]['current_room'] = None
+                
+                winner_color = game.get_winner()
+                winner_name = "黑棋" if winner_color == PLAYER_BLACK else "白棋"
+                loser_name = "黑棋" if winner_color == PLAYER_WHITE else "白棋"
+                
+                player2_name = server.players[player2_id]['name'] if player2_id in server.players else '玩家2'
+                
+                add_chat_message(
+                    room['id'],
+                    None,
+                    CHAT_MESSAGE_TYPE_SYSTEM,
+                    f"{player2_name}（{loser_name}）离线，{winner_name}获胜！",
+                    {'winner': winner_color, 'resign_reason': RESIGN_REASON_OFFLINE}
+                )
+                
+                winner_id = None
+                if winner_color == PLAYER_BLACK:
+                    winner_id = room.get('player1')
+                elif winner_color == PLAYER_WHITE:
+                    winner_id = room.get('player2')
+                update_game_stats(room['id'], winner_id)
+                
+                create_game_record(room['id'])
+                
+                sync_room(room['id'])
                 
                 return True, message
     
