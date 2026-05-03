@@ -8,7 +8,8 @@
 import os
 
 # 检查是否启用数据库持久化
-USE_DATABASE = os.environ.get('USE_DATABASE', 'false').lower() == 'true'
+# 默认启用数据库持久化，可以通过环境变量 USE_DATABASE=false 禁用
+USE_DATABASE = os.environ.get('USE_DATABASE', 'true').lower() == 'true'
 
 # 内存字典（主存储，保持与原代码兼容）
 players = {}
