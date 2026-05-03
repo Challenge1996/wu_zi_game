@@ -46,7 +46,12 @@ from constants import (
 )
 from util import get_timestamp, generate_id
 from game import WuziqiGame
-from server.data_store import players, rooms, challenges, undo_requests, chat_messages
+import server
+from server.data_store import (
+    sync_player, sync_room, sync_challenge, sync_undo_request,
+    sync_chat_message, sync_game_record,
+    sync_spectator_add, sync_spectator_remove
+)
 from server.utils import (
     get_player_info,
     get_room_info,
@@ -89,12 +94,12 @@ def register_routes(app):
         player_name = data.get('name', '').strip()
         
         if not player_name:
-            player_name = f'玩家{len(players) + 1}'
+            player_name = f'玩家{len(server.players) + 1}'
         
         player_id = generate_id()
         now = get_timestamp()
         
-        players[player_id] = {
+        server.players[player_id] = {
             'id': player_id,
             'name': player_name,
             'online': True,
@@ -116,6 +121,9 @@ def register_routes(app):
             }
         }
         
+        # 同步到数据库
+        sync_player(player_id)
+        
         return jsonify({
             "success": True,
             "player_id": player_id,
@@ -129,14 +137,17 @@ def register_routes(app):
         data = request.get_json() or {}
         player_id = data.get('player_id')
         
-        if not player_id or player_id not in players:
+        if not player_id or player_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
             }), 400
         
-        players[player_id]['online'] = True
-        players[player_id]['last_heartbeat'] = get_timestamp()
+        server.players[player_id]['online'] = True
+        server.players[player_id]['last_heartbeat'] = get_timestamp()
+        
+        # 同步到数据库
+        sync_player(player_id)
         
         return jsonify({
             "success": True,
@@ -149,18 +160,18 @@ def register_routes(app):
         data = request.get_json() or {}
         player_id = data.get('player_id')
         
-        if not player_id or player_id not in players:
+        if not player_id or player_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
             }), 400
         
-        players[player_id]['online'] = False
-        players[player_id]['status'] = PLAYER_STATUS_IDLE
+        server.players[player_id]['online'] = False
+        server.players[player_id]['status'] = PLAYER_STATUS_IDLE
         
-        room_id = players[player_id]['current_room']
-        if room_id and room_id in rooms:
-            room = rooms[room_id]
+        room_id = server.players[player_id]['current_room']
+        if room_id and room_id in server.rooms:
+            room = server.rooms[room_id]
             if room['status'] in [ROOM_STATUS_PLAYING, ROOM_STATUS_COIN_TOSS]:
                 if room['player1'] == player_id:
                     room['winner'] = PLAYER_WHITE
@@ -170,9 +181,11 @@ def register_routes(app):
                 room['finished_at'] = get_timestamp()
                 
                 other_player_id = room['player2'] if room['player1'] == player_id else room['player1']
-                if other_player_id in players:
-                    players[other_player_id]['status'] = PLAYER_STATUS_IDLE
-                    players[other_player_id]['current_room'] = None
+                if other_player_id in server.players:
+                    server.players[other_player_id]['status'] = PLAYER_STATUS_IDLE
+                    server.players[other_player_id]['current_room'] = None
+                    # 同步另一个玩家到数据库
+                    sync_player(other_player_id)
                 
                 # 更新战绩统计
                 winner_id = None
@@ -188,8 +201,14 @@ def register_routes(app):
                     game.game_over = True
                     game.resign_reason = RESIGN_REASON_OFFLINE
                 create_game_record(room_id)
+                
+                # 同步房间到数据库
+                sync_room(room_id)
         
-        players[player_id]['current_room'] = None
+        server.players[player_id]['current_room'] = None
+        
+        # 同步玩家到数据库
+        sync_player(player_id)
         
         return jsonify({
             "success": True,
@@ -204,13 +223,13 @@ def register_routes(app):
         """
         player_id = request.args.get('player_id')
         
-        if not player_id or player_id not in players:
+        if not player_id or player_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
             }), 400
         
-        player = players[player_id]
+        player = server.players[player_id]
         stats = player.get('stats', {
             'total_games': 0,
             'wins': 0,
@@ -234,7 +253,7 @@ def register_routes(app):
     def list_players():
         """获取在线玩家列表"""
         online_players = []
-        for pid, player in players.items():
+        for pid, player in server.players.items():
             if player['online']:
                 online_players.append(get_player_info(pid))
         
@@ -249,7 +268,7 @@ def register_routes(app):
         """获取玩家详细信息"""
         player_id = request.args.get('player_id')
         
-        if not player_id or player_id not in players:
+        if not player_id or player_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
@@ -279,14 +298,14 @@ def register_routes(app):
                 "message": "不能挑战自己"
             }), 400
         
-        if challenger_id not in players or challenged_id not in players:
+        if challenger_id not in server.players or challenged_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
             }), 400
         
-        challenger = players[challenger_id]
-        challenged = players[challenged_id]
+        challenger = server.players[challenger_id]
+        challenged = server.players[challenged_id]
         
         if challenger['status'] != PLAYER_STATUS_IDLE:
             return jsonify({
@@ -306,7 +325,7 @@ def register_routes(app):
                 "message": "对方正忙，无法接受挑战"
             }), 400
         
-        for cid, challenge in challenges.items():
+        for cid, challenge in server.challenges.items():
             if challenge['status'] == CHALLENGE_STATUS_PENDING:
                 if (challenge['challenger'] == challenger_id and challenge['challenged'] == challenged_id) or \
                    (challenge['challenger'] == challenged_id and challenge['challenged'] == challenger_id):
@@ -317,7 +336,7 @@ def register_routes(app):
         
         now = get_timestamp()
         challenge_id = generate_id()
-        challenges[challenge_id] = {
+        server.challenges[challenge_id] = {
             'id': challenge_id,
             'challenger': challenger_id,
             'challenged': challenged_id,
@@ -326,8 +345,13 @@ def register_routes(app):
             'expires_at': now + CHALLENGE_EXPIRE_SECONDS
         }
         
-        players[challenger_id]['status'] = PLAYER_STATUS_CHALLENGING
-        players[challenged_id]['status'] = PLAYER_STATUS_CHALLENGING
+        server.players[challenger_id]['status'] = PLAYER_STATUS_CHALLENGING
+        server.players[challenged_id]['status'] = PLAYER_STATUS_CHALLENGING
+        
+        # 同步到数据库
+        sync_challenge(challenge_id)
+        sync_player(challenger_id)
+        sync_player(challenged_id)
         
         return jsonify({
             "success": True,
@@ -340,7 +364,7 @@ def register_routes(app):
         """获取玩家的挑战列表"""
         player_id = request.args.get('player_id')
         
-        if not player_id or player_id not in players:
+        if not player_id or player_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
@@ -349,14 +373,14 @@ def register_routes(app):
         cleanup_expired_challenges()
         
         player_challenges = []
-        for cid, challenge in challenges.items():
+        for cid, challenge in server.challenges.items():
             if challenge['challenger'] == player_id or challenge['challenged'] == player_id:
                 player_challenges.append({
                     'id': challenge['id'],
                     'challenger': challenge['challenger'],
-                    'challenger_name': players[challenge['challenger']]['name'] if challenge['challenger'] in players else None,
+                    'challenger_name': server.players[challenge['challenger']]['name'] if challenge['challenger'] in server.players else None,
                     'challenged': challenge['challenged'],
-                    'challenged_name': players[challenge['challenged']]['name'] if challenge['challenged'] in players else None,
+                    'challenged_name': server.players[challenge['challenged']]['name'] if challenge['challenged'] in server.players else None,
                     'status': challenge['status'],
                     'room_id': challenge.get('room_id'),
                     'created_at': challenge['created_at'],
@@ -383,13 +407,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if challenge_id not in challenges:
+        if challenge_id not in server.challenges:
             return jsonify({
                 "success": False,
                 "message": "挑战不存在"
             }), 400
         
-        challenge = challenges[challenge_id]
+        challenge = server.challenges[challenge_id]
         
         if challenge['status'] != CHALLENGE_STATUS_PENDING:
             return jsonify({
@@ -406,12 +430,12 @@ def register_routes(app):
         challenge['status'] = CHALLENGE_STATUS_ACCEPTED
         
         room_id = generate_id()
-        challenger_name = players[challenge['challenger']]['name']
-        challenged_name = players[player_id]['name']
+        challenger_name = server.players[challenge['challenger']]['name']
+        challenged_name = server.players[player_id]['name']
         
         challenge['room_id'] = room_id
         
-        rooms[room_id] = {
+        server.rooms[room_id] = {
             'id': room_id,
             'name': f"{challenger_name} vs {challenged_name}",
             'creator': challenge['challenger'],
@@ -430,17 +454,23 @@ def register_routes(app):
             'spectator_count': 0
         }
         
-        game = rooms[room_id]['game']
+        game = server.rooms[room_id]['game']
         
         game.players[PLAYER_BLACK] = challenge['challenger']
         game.players[PLAYER_WHITE] = player_id
         
         game.start_coin_toss()
         
-        players[challenge['challenger']]['status'] = PLAYER_STATUS_IN_GAME
-        players[challenge['challenger']]['current_room'] = room_id
-        players[player_id]['status'] = PLAYER_STATUS_IN_GAME
-        players[player_id]['current_room'] = room_id
+        server.players[challenge['challenger']]['status'] = PLAYER_STATUS_IN_GAME
+        server.players[challenge['challenger']]['current_room'] = room_id
+        server.players[player_id]['status'] = PLAYER_STATUS_IN_GAME
+        server.players[player_id]['current_room'] = room_id
+        
+        # 同步到数据库
+        sync_challenge(challenge_id)
+        sync_room(room_id)
+        sync_player(challenge['challenger'])
+        sync_player(player_id)
         
         return jsonify({
             "success": True,
@@ -461,13 +491,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if challenge_id not in challenges:
+        if challenge_id not in server.challenges:
             return jsonify({
                 "success": False,
                 "message": "挑战不存在"
             }), 400
         
-        challenge = challenges[challenge_id]
+        challenge = server.challenges[challenge_id]
         
         if challenge['status'] != CHALLENGE_STATUS_PENDING:
             return jsonify({
@@ -483,8 +513,13 @@ def register_routes(app):
         
         challenge['status'] = CHALLENGE_STATUS_DECLINED
         
-        players[challenge['challenger']]['status'] = PLAYER_STATUS_IDLE
-        players[player_id]['status'] = PLAYER_STATUS_IDLE
+        server.players[challenge['challenger']]['status'] = PLAYER_STATUS_IDLE
+        server.players[player_id]['status'] = PLAYER_STATUS_IDLE
+        
+        # 同步到数据库
+        sync_challenge(challenge_id)
+        sync_player(challenge['challenger'])
+        sync_player(player_id)
         
         return jsonify({
             "success": True,
@@ -497,7 +532,7 @@ def register_routes(app):
         room_id = request.args.get('room_id')
         player_id = request.args.get('player_id')
         
-        if not room_id or room_id not in rooms:
+        if not room_id or room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
@@ -514,7 +549,7 @@ def register_routes(app):
     def list_rooms():
         """获取房间列表"""
         room_list = []
-        for rid, room in rooms.items():
+        for rid, room in server.rooms.items():
             room_list.append(get_room_info(rid))
         
         return jsonify({
@@ -537,13 +572,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         if room['status'] != ROOM_STATUS_COIN_TOSS:
             return jsonify({
                 "success": False,
@@ -581,13 +616,13 @@ def register_routes(app):
         data = request.get_json() or {}
         room_id = data.get('room_id')
         
-        if not room_id or room_id not in rooms:
+        if not room_id or room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         if room['status'] != ROOM_STATUS_COIN_TOSS:
             return jsonify({
                 "success": False,
@@ -633,13 +668,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         game = room['game']
         
         success, message = game.player_choose_color(player_id, color_choice)
@@ -668,13 +703,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         game = room['game']
         
         result = game.finalize_player_colors(player2_id)
@@ -723,13 +758,13 @@ def register_routes(app):
                 "message": "缺少row或col参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         if room['status'] != ROOM_STATUS_PLAYING:
             return jsonify({
                 "success": False,
@@ -748,7 +783,7 @@ def register_routes(app):
         success, message = game.place_piece(row, col, player_color)
         
         if success:
-            player_name = players[player_id]['name'] if player_id in players else '玩家'
+            player_name = server.players[player_id]['name'] if player_id in server.players else '玩家'
             color_name = "黑棋" if player_color == PLAYER_BLACK else "白棋"
             add_chat_message(
                 room_id,
@@ -763,12 +798,12 @@ def register_routes(app):
             room['finished_at'] = get_timestamp()
             room['winner'] = game.get_winner()
             
-            if room['player1'] in players:
-                players[room['player1']]['status'] = PLAYER_STATUS_IDLE
-                players[room['player1']]['current_room'] = None
-            if room['player2'] in players:
-                players[room['player2']]['status'] = PLAYER_STATUS_IDLE
-                players[room['player2']]['current_room'] = None
+            if room['player1'] in server.players:
+                server.players[room['player1']]['status'] = PLAYER_STATUS_IDLE
+                server.players[room['player1']]['current_room'] = None
+            if room['player2'] in server.players:
+                server.players[room['player2']]['status'] = PLAYER_STATUS_IDLE
+                server.players[room['player2']]['current_room'] = None
             
             winner_color = game.get_winner()
             winner_name = "黑棋" if winner_color == PLAYER_BLACK else "白棋"
@@ -812,13 +847,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         if room['status'] != ROOM_STATUS_PLAYING:
             return jsonify({
                 "success": False,
@@ -859,13 +894,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         if room['status'] != ROOM_STATUS_PLAYING:
             return jsonify({
                 "success": False,
@@ -908,7 +943,7 @@ def register_routes(app):
         now = get_timestamp()
         undo_request_id = generate_id()
         
-        undo_requests[undo_request_id] = {
+        server.undo_requests[undo_request_id] = {
             'id': undo_request_id,
             'room_id': room_id,
             'requester': player_id,
@@ -918,7 +953,10 @@ def register_routes(app):
             'expires_at': now + UNDO_REQUEST_EXPIRE_SECONDS
         }
         
-        requester_name = players[player_id]['name'] if player_id in players else '未知玩家'
+        # 同步到数据库
+        sync_undo_request(undo_request_id)
+        
+        requester_name = server.players[player_id]['name'] if player_id in server.players else '未知玩家'
         
         return jsonify({
             "success": True,
@@ -943,13 +981,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         
         undo_request = get_room_undo_request(room_id)
         
@@ -965,8 +1003,8 @@ def register_routes(app):
                 "message": "您不是被请求的玩家"
             }), 400
         
-        responder_name = players[player_id]['name'] if player_id in players else '玩家'
-        requester_name = players[undo_request['requester']]['name'] if undo_request['requester'] in players else '玩家'
+        responder_name = server.players[player_id]['name'] if player_id in server.players else '玩家'
+        requester_name = server.players[undo_request['requester']]['name'] if undo_request['requester'] in server.players else '玩家'
         
         if accept:
             undo_request['status'] = UNDO_REQUEST_STATUS_ACCEPTED
@@ -990,6 +1028,11 @@ def register_routes(app):
                     {'accepted': True}
                 )
             
+            # 同步到数据库
+            sync_undo_request(undo_request['id'])
+            if success and was_finished:
+                sync_room(room_id)
+            
             state = game.get_game_state(player_id)
             
             return jsonify({
@@ -1008,6 +1051,9 @@ def register_routes(app):
                 f"{responder_name} 拒绝了 {requester_name} 的悔棋请求",
                 {'accepted': False}
             )
+            
+            # 同步到数据库
+            sync_undo_request(undo_request['id'])
             
             game = room['game']
             state = game.get_game_state(player_id)
@@ -1033,7 +1079,7 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
@@ -1067,13 +1113,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         
         game = room['game']
         game.clear_board()
@@ -1111,28 +1157,28 @@ def register_routes(app):
                 "message": "两个玩家不能是同一个人"
             }), 400
         
-        if player1_id not in players or player2_id not in players:
+        if player1_id not in server.players or player2_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
             }), 400
         
-        if players[player1_id]['status'] != PLAYER_STATUS_IDLE or players[player2_id]['status'] != PLAYER_STATUS_IDLE:
+        if server.players[player1_id]['status'] != PLAYER_STATUS_IDLE or server.players[player2_id]['status'] != PLAYER_STATUS_IDLE:
             return jsonify({
                 "success": False,
                 "message": "玩家状态不允许开始游戏"
             }), 400
         
         room_id = generate_id()
-        player1_name = players[player1_id]['name']
-        player2_name = players[player2_id]['name']
+        player1_name = server.players[player1_id]['name']
+        player2_name = server.players[player2_id]['name']
         
         game = WuziqiGame()
         game.players[PLAYER_BLACK] = player1_id
         game.players[PLAYER_WHITE] = player2_id
         game.start_game()
         
-        rooms[room_id] = {
+        server.rooms[room_id] = {
             'id': room_id,
             'name': f"{player1_name} vs {player2_name}",
             'creator': player1_id,
@@ -1149,10 +1195,10 @@ def register_routes(app):
             'spectator_count': 0
         }
         
-        players[player1_id]['status'] = PLAYER_STATUS_IN_GAME
-        players[player1_id]['current_room'] = room_id
-        players[player2_id]['status'] = PLAYER_STATUS_IN_GAME
-        players[player2_id]['current_room'] = room_id
+        server.players[player1_id]['status'] = PLAYER_STATUS_IN_GAME
+        server.players[player1_id]['current_room'] = room_id
+        server.players[player2_id]['status'] = PLAYER_STATUS_IN_GAME
+        server.players[player2_id]['current_room'] = room_id
         
         return jsonify({
             "success": True,
@@ -1178,13 +1224,13 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         
         if room['status'] != ROOM_STATUS_PLAYING:
             return jsonify({
@@ -1208,14 +1254,14 @@ def register_routes(app):
             room['finished_at'] = get_timestamp()
             room['winner'] = game.get_winner()
             
-            if room['player1'] in players:
-                players[room['player1']]['status'] = PLAYER_STATUS_IDLE
-                players[room['player1']]['current_room'] = None
-            if room['player2'] in players:
-                players[room['player2']]['status'] = PLAYER_STATUS_IDLE
-                players[room['player2']]['current_room'] = None
+            if room['player1'] in server.players:
+                server.players[room['player1']]['status'] = PLAYER_STATUS_IDLE
+                server.players[room['player1']]['current_room'] = None
+            if room['player2'] in server.players:
+                server.players[room['player2']]['status'] = PLAYER_STATUS_IDLE
+                server.players[room['player2']]['current_room'] = None
             
-            player_name = players[player_id]['name'] if player_id in players else '玩家'
+            player_name = server.players[player_id]['name'] if player_id in server.players else '玩家'
             add_chat_message(
                 room_id, 
                 None, 
@@ -1273,19 +1319,19 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        if player_id not in players:
+        if player_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         if not is_room_player(room_id, player_id) and not is_room_spectator(room_id, player_id):
             return jsonify({
                 "success": False,
@@ -1335,7 +1381,7 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
@@ -1391,19 +1437,19 @@ def register_routes(app):
                 "message": "缺少必要参数"
             }), 400
         
-        if player_id not in players:
+        if player_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"
             }), 400
         
-        if room_id not in rooms:
+        if room_id not in server.rooms:
             return jsonify({
                 "success": False,
                 "message": "房间不存在"
             }), 400
         
-        room = rooms[room_id]
+        room = server.rooms[room_id]
         
         if room.get('visibility') != ROOM_VISIBILITY_PUBLIC:
             return jsonify({
@@ -1470,7 +1516,7 @@ def register_routes(app):
         """
         player_id = request.args.get('player_id')
         
-        if not player_id or player_id not in players:
+        if not player_id or player_id not in server.players:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"

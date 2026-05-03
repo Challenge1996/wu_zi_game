@@ -33,14 +33,18 @@ from constants import (
     SCORE_DRAW
 )
 from util import get_timestamp, generate_id
-from server.data_store import players, rooms, undo_requests, challenges, chat_messages, game_records
+import server
+from server.data_store import (
+    sync_player, sync_room, sync_chat_message, sync_game_record,
+    sync_spectator_add, sync_spectator_remove
+)
 
 
 def get_player_info(player_id):
     """获取玩家公开信息"""
-    if player_id not in players:
+    if player_id not in server.players:
         return None
-    player = players[player_id]
+    player = server.players[player_id]
     return {
         'id': player['id'],
         'name': player['name'],
@@ -52,9 +56,9 @@ def get_player_info(player_id):
 
 def get_room_info(room_id, player_id=None):
     """获取房间信息"""
-    if room_id not in rooms:
+    if room_id not in server.rooms:
         return None
-    room = rooms[room_id]
+    room = server.rooms[room_id]
     game = room['game']
     game_state = game.get_game_state(player_id)
     
@@ -76,8 +80,8 @@ def get_room_info(room_id, player_id=None):
         'challenged_id': room.get('challenged_id'),
         'player1': room['player1'],
         'player2': room['player2'],
-        'player1_name': players[room['player1']]['name'] if room['player1'] in players else None,
-        'player2_name': players[room['player2']]['name'] if room['player2'] in players else None,
+        'player1_name': server.players[room['player1']]['name'] if room['player1'] in server.players else None,
+        'player2_name': server.players[room['player2']]['name'] if room['player2'] in server.players else None,
         'status': room['status'],
         'visibility': room.get('visibility', ROOM_VISIBILITY_PUBLIC),
         'spectator_count': spectator_count,
@@ -97,7 +101,7 @@ def cleanup_expired_challenges():
     """清理过期的挑战"""
     now = get_timestamp()
     expired = []
-    for cid, challenge in challenges.items():
+    for cid, challenge in server.challenges.items():
         if challenge['status'] == 'pending' and now > challenge['expires_at']:
             challenge['status'] = 'expired'
             expired.append(cid)
@@ -108,7 +112,7 @@ def cleanup_expired_undo_requests():
     """清理过期的悔棋请求"""
     now = get_timestamp()
     expired = []
-    for uid, req in undo_requests.items():
+    for uid, req in server.undo_requests.items():
         if req['status'] == 'pending' and now > req['expires_at']:
             req['status'] = 'expired'
             expired.append(uid)
@@ -118,7 +122,7 @@ def cleanup_expired_undo_requests():
 def get_room_undo_request(room_id):
     """获取房间的悔棋请求状态"""
     pending_requests = []
-    for uid, req in undo_requests.items():
+    for uid, req in server.undo_requests.items():
         if req['room_id'] == room_id and req['status'] == 'pending':
             pending_requests.append(req)
     
@@ -137,9 +141,9 @@ def get_undo_request_info(req, player_id=None):
         'id': req['id'],
         'room_id': req['room_id'],
         'requester': req['requester'],
-        'requester_name': players[req['requester']]['name'] if req['requester'] in players else None,
+        'requester_name': server.players[req['requester']]['name'] if req['requester'] in server.players else None,
         'requested': req['requested'],
-        'requested_name': players[req['requested']]['name'] if req['requested'] in players else None,
+        'requested_name': server.players[req['requested']]['name'] if req['requested'] in server.players else None,
         'status': req['status'],
         'created_at': req['created_at'],
         'expires_at': req['expires_at']
@@ -189,12 +193,12 @@ def check_move_timeout(room):
             room['finished_at'] = get_timestamp()
             room['winner'] = game.get_winner()
             
-            if room['player1'] in players:
-                players[room['player1']]['status'] = PLAYER_STATUS_IDLE
-                players[room['player1']]['current_room'] = None
-            if room['player2'] in players:
-                players[room['player2']]['status'] = PLAYER_STATUS_IDLE
-                players[room['player2']]['current_room'] = None
+            if room['player1'] in server.players:
+                server.players[room['player1']]['status'] = PLAYER_STATUS_IDLE
+                server.players[room['player1']]['current_room'] = None
+            if room['player2'] in server.players:
+                server.players[room['player2']]['status'] = PLAYER_STATUS_IDLE
+                server.players[room['player2']]['current_room'] = None
             
             return True, message
     
@@ -223,8 +227,8 @@ def check_player_offline(room):
     player1_offline = False
     player2_offline = False
     
-    if player1_id in players:
-        player1 = players[player1_id]
+    if player1_id in server.players:
+        player1 = server.players[player1_id]
         if not player1.get('online', False):
             player1_offline = True
         else:
@@ -232,8 +236,8 @@ def check_player_offline(room):
             if now - last_heartbeat > PLAYER_OFFLINE_TIMEOUT:
                 player1_offline = True
     
-    if player2_id in players:
-        player2 = players[player2_id]
+    if player2_id in server.players:
+        player2 = server.players[player2_id]
         if not player2.get('online', False):
             player2_offline = True
         else:
@@ -249,12 +253,12 @@ def check_player_offline(room):
         game.winner = None
         game.resign_reason = RESIGN_REASON_OFFLINE
         
-        if player1_id in players:
-            players[player1_id]['status'] = PLAYER_STATUS_IDLE
-            players[player1_id]['current_room'] = None
-        if player2_id in players:
-            players[player2_id]['status'] = PLAYER_STATUS_IDLE
-            players[player2_id]['current_room'] = None
+        if player1_id in server.players:
+            server.players[player1_id]['status'] = PLAYER_STATUS_IDLE
+            server.players[player1_id]['current_room'] = None
+        if player2_id in server.players:
+            server.players[player2_id]['status'] = PLAYER_STATUS_IDLE
+            server.players[player2_id]['current_room'] = None
         
         return True, "双方玩家均已离线，游戏结束"
     
@@ -267,12 +271,12 @@ def check_player_offline(room):
                 room['finished_at'] = get_timestamp()
                 room['winner'] = game.get_winner()
                 
-                if player1_id in players:
-                    players[player1_id]['status'] = PLAYER_STATUS_IDLE
-                    players[player1_id]['current_room'] = None
-                if player2_id in players:
-                    players[player2_id]['status'] = PLAYER_STATUS_IDLE
-                    players[player2_id]['current_room'] = None
+                if player1_id in server.players:
+                    server.players[player1_id]['status'] = PLAYER_STATUS_IDLE
+                    server.players[player1_id]['current_room'] = None
+                if player2_id in server.players:
+                    server.players[player2_id]['status'] = PLAYER_STATUS_IDLE
+                    server.players[player2_id]['current_room'] = None
                 
                 return True, message
     
@@ -285,12 +289,12 @@ def check_player_offline(room):
                 room['finished_at'] = get_timestamp()
                 room['winner'] = game.get_winner()
                 
-                if player1_id in players:
-                    players[player1_id]['status'] = PLAYER_STATUS_IDLE
-                    players[player1_id]['current_room'] = None
-                if player2_id in players:
-                    players[player2_id]['status'] = PLAYER_STATUS_IDLE
-                    players[player2_id]['current_room'] = None
+                if player1_id in server.players:
+                    server.players[player1_id]['status'] = PLAYER_STATUS_IDLE
+                    server.players[player1_id]['current_room'] = None
+                if player2_id in server.players:
+                    server.players[player2_id]['status'] = PLAYER_STATUS_IDLE
+                    server.players[player2_id]['current_room'] = None
                 
                 return True, message
     
@@ -304,7 +308,7 @@ def cleanup_all_timeouts():
     """
     results = []
     
-    for room_id, room in rooms.items():
+    for room_id, room in server.rooms.items():
         if room['status'] == ROOM_STATUS_PLAYING:
             timeout, msg = check_move_timeout(room)
             if timeout:
@@ -331,8 +335,8 @@ def init_room_chat(room_id):
     Args:
         room_id: 房间ID
     """
-    if room_id not in chat_messages:
-        chat_messages[room_id] = []
+    if room_id not in server.chat_messages:
+        server.chat_messages[room_id] = []
 
 
 def add_chat_message(room_id, player_id, message_type, content, extra_data=None):
@@ -355,17 +359,20 @@ def add_chat_message(room_id, player_id, message_type, content, extra_data=None)
         'id': message_id,
         'room_id': room_id,
         'player_id': player_id,
-        'player_name': players[player_id]['name'] if player_id in players else None,
+        'player_name': server.players[player_id]['name'] if player_id in server.players else None,
         'type': message_type,
         'content': content,
         'extra_data': extra_data or {},
         'timestamp': now
     }
     
-    chat_messages[room_id].append(message)
+    server.chat_messages[room_id].append(message)
     
-    if len(chat_messages[room_id]) > CHAT_MAX_HISTORY:
-        chat_messages[room_id] = chat_messages[room_id][-CHAT_MAX_HISTORY:]
+    if len(server.chat_messages[room_id]) > CHAT_MAX_HISTORY:
+        server.chat_messages[room_id] = server.chat_messages[room_id][-CHAT_MAX_HISTORY:]
+    
+    # 同步到数据库
+    sync_chat_message(message_id, room_id)
     
     return message
 
@@ -379,10 +386,10 @@ def get_room_chat_messages(room_id, player_id=None, since_id=None):
     Returns:
         消息列表
     """
-    if room_id not in chat_messages:
+    if room_id not in server.chat_messages:
         return []
     
-    messages = chat_messages[room_id]
+    messages = server.chat_messages[room_id]
     
     if since_id:
         for i, msg in enumerate(messages):
@@ -418,16 +425,16 @@ def get_room_spectators_info(room_id):
     Returns:
         观战者信息列表
     """
-    if room_id not in rooms:
+    if room_id not in server.rooms:
         return []
     
-    room = rooms[room_id]
+    room = server.rooms[room_id]
     spectators = room.get('spectators', set())
     
     result = []
     for spectator_id in spectators:
-        if spectator_id in players:
-            player = players[spectator_id]
+        if spectator_id in server.players:
+            player = server.players[spectator_id]
             result.append({
                 'id': spectator_id,
                 'name': player['name'],
@@ -445,10 +452,10 @@ def is_room_player(room_id, player_id):
     Returns:
         bool: 是否是对局玩家
     """
-    if room_id not in rooms:
+    if room_id not in server.rooms:
         return False
     
-    room = rooms[room_id]
+    room = server.rooms[room_id]
     return (player_id == room.get('player1') or 
             player_id == room.get('player2') or
             player_id == room.get('challenger_id') or
@@ -463,10 +470,10 @@ def is_room_spectator(room_id, player_id):
     Returns:
         bool: 是否是观战者
     """
-    if room_id not in rooms:
+    if room_id not in server.rooms:
         return False
     
-    room = rooms[room_id]
+    room = server.rooms[room_id]
     spectators = room.get('spectators', set())
     return player_id in spectators
 
@@ -479,14 +486,14 @@ def add_spectator(room_id, player_id):
     Returns:
         (success, message)
     """
-    if room_id not in rooms:
+    if room_id not in server.rooms:
         return False, "房间不存在"
     
-    if player_id not in players:
+    if player_id not in server.players:
         return False, "玩家不存在"
     
-    room = rooms[room_id]
-    player = players[player_id]
+    room = server.rooms[room_id]
+    player = server.players[player_id]
     
     if is_room_player(room_id, player_id):
         return False, "您是该房间的对局玩家，不能作为观战者加入"
@@ -512,6 +519,11 @@ def add_spectator(room_id, player_id):
         {'spectator_id': player_id, 'spectator_name': spectator_name}
     )
     
+    # 同步到数据库
+    sync_room(room_id)
+    sync_player(player_id)
+    sync_spectator_add(room_id, player_id, get_timestamp())
+    
     return True, f"成功加入观战，当前共有 {len(spectators)} 人观战"
 
 
@@ -523,10 +535,10 @@ def remove_spectator(room_id, player_id):
     Returns:
         (success, message)
     """
-    if room_id not in rooms:
+    if room_id not in server.rooms:
         return False, "房间不存在"
     
-    room = rooms[room_id]
+    room = server.rooms[room_id]
     spectators = room.get('spectators', set())
     
     if player_id not in spectators:
@@ -536,8 +548,8 @@ def remove_spectator(room_id, player_id):
     room['spectators'] = spectators
     room['spectator_count'] = len(spectators)
     
-    if player_id in players:
-        player = players[player_id]
+    if player_id in server.players:
+        player = server.players[player_id]
         player['status'] = PLAYER_STATUS_IDLE
         player['current_room'] = None
         
@@ -550,6 +562,11 @@ def remove_spectator(room_id, player_id):
             {'spectator_id': player_id, 'spectator_name': spectator_name}
         )
     
+    # 同步到数据库
+    sync_room(room_id)
+    sync_player(player_id)
+    sync_spectator_remove(room_id, player_id)
+    
     return True, "成功离开观战"
 
 
@@ -560,7 +577,7 @@ def get_public_rooms():
     """
     public_rooms = []
     
-    for room_id, room in rooms.items():
+    for room_id, room in server.rooms.items():
         visibility = room.get('visibility', ROOM_VISIBILITY_PUBLIC)
         if visibility != ROOM_VISIBILITY_PUBLIC:
             continue
@@ -574,8 +591,8 @@ def get_public_rooms():
             'creator': room['creator'],
             'player1': room['player1'],
             'player2': room['player2'],
-            'player1_name': players[room['player1']]['name'] if room['player1'] in players else None,
-            'player2_name': players[room['player2']]['name'] if room['player2'] in players else None,
+            'player1_name': server.players[room['player1']]['name'] if room['player1'] in server.players else None,
+            'player2_name': server.players[room['player2']]['name'] if room['player2'] in server.players else None,
             'status': room['status'],
             'visibility': visibility,
             'spectator_count': spectator_count,
@@ -612,10 +629,10 @@ def update_player_stats(player_id, result):
         player_id: 玩家ID
         result: 结果 ('win', 'lose', 'draw')
     """
-    if player_id not in players:
+    if player_id not in server.players:
         return
     
-    player = players[player_id]
+    player = server.players[player_id]
     if 'stats' not in player:
         # 初始化战绩数据（为了兼容旧数据）
         player['stats'] = {
@@ -654,6 +671,9 @@ def update_player_stats(player_id, result):
     
     # 更新段位
     stats['rank'] = calculate_rank(stats['score'])
+    
+    # 同步到数据库
+    sync_player(player_id)
 
 
 def update_game_stats(room_id, winner_id):
@@ -662,10 +682,10 @@ def update_game_stats(room_id, winner_id):
         room_id: 房间ID
         winner_id: 获胜者ID（None表示平局）
     """
-    if room_id not in rooms:
+    if room_id not in server.rooms:
         return
     
-    room = rooms[room_id]
+    room = server.rooms[room_id]
     player1_id = room.get('player1')
     player2_id = room.get('player2')
     
@@ -691,10 +711,10 @@ def create_game_record(room_id):
     Returns:
         游戏记录ID（如果成功创建），否则返回None
     """
-    if room_id not in rooms:
+    if room_id not in server.rooms:
         return None
     
-    room = rooms[room_id]
+    room = server.rooms[room_id]
     game = room.get('game')
     
     if not game:
@@ -706,8 +726,8 @@ def create_game_record(room_id):
     if not player1_id or not player2_id:
         return None
     
-    player1_name = players[player1_id]['name'] if player1_id in players else None
-    player2_name = players[player2_id]['name'] if player2_id in players else None
+    player1_name = server.players[player1_id]['name'] if player1_id in server.players else None
+    player2_name = server.players[player2_id]['name'] if player2_id in server.players else None
     
     winner_color = room.get('winner')
     winner_id = None
@@ -748,18 +768,24 @@ def create_game_record(room_id):
         
     }
     
-    game_records[record_id] = game_record
+    server.game_records[record_id] = game_record
     
     for player_id in [player1_id, player2_id]:
-        if player_id not in players:
+        if player_id not in server.players:
             continue
         
-        player = players[player_id]
+        player = server.players[player_id]
         if 'game_record_ids' not in player:
             player['game_record_ids'] = []
         
         if record_id not in player['game_record_ids']:
             player['game_record_ids'].append(record_id)
+    
+    # 同步到数据库
+    sync_game_record(record_id)
+    # 同步玩家（因为更新了 game_record_ids）
+    sync_player(player1_id)
+    sync_player(player2_id)
     
     return record_id
 
@@ -771,10 +797,10 @@ def get_game_record(record_id):
     Returns:
         游戏记录对象，不存在返回None
     """
-    if record_id not in game_records:
+    if record_id not in server.game_records:
         return None
     
-    record = game_records[record_id]
+    record = server.game_records[record_id]
     
     return {
         'id': record['id'],
@@ -811,18 +837,18 @@ def get_player_game_records(player_id):
     Returns:
         游戏记录列表（简要信息）
     """
-    if player_id not in players:
+    if player_id not in server.players:
         return []
     
-    player = players[player_id]
+    player = server.players[player_id]
     record_ids = player.get('game_record_ids', [])
     
     records = []
     for record_id in reversed(record_ids):
-        if record_id not in game_records:
+        if record_id not in server.game_records:
             continue
         
-        record = game_records[record_id]
+        record = server.game_records[record_id]
         is_winner = (record.get('winner_id') == player_id)
         
         opponent_name = None
