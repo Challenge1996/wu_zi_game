@@ -105,7 +105,7 @@ def init_tables():
             current_streak INT DEFAULT 0,
             max_streak INT DEFAULT 0,
             score INT DEFAULT 0,
-            rank VARCHAR(50) DEFAULT '新手',
+            `rank` VARCHAR(50) DEFAULT '新手',
             FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         ''')
@@ -258,7 +258,7 @@ def create_player(player_id, name, registered_at):
         # 插入玩家战绩
         cursor.execute('''
             INSERT INTO player_stats (player_id, total_games, wins, losses, draws, win_rate, 
-                                      current_streak, max_streak, score, rank)
+                                      current_streak, max_streak, score, `rank`)
             VALUES (%s, 0, 0, 0, 0, 0.00, 0, 0, 0, %s)
         ''', (player_id, RANK_NEWBIE))
     
@@ -273,7 +273,7 @@ def get_player(player_id):
     with conn.cursor() as cursor:
         cursor.execute('''
             SELECT p.*, ps.total_games, ps.wins, ps.losses, ps.draws, 
-                   ps.win_rate, ps.current_streak, ps.max_streak, ps.score, ps.rank
+                   ps.win_rate, ps.current_streak, ps.max_streak, ps.score, ps.`rank`
             FROM players p
             LEFT JOIN player_stats ps ON p.id = ps.player_id
             WHERE p.id = %s
@@ -341,7 +341,9 @@ def update_player_stats(player_id, **kwargs):
     
     for key, value in kwargs.items():
         if key in allowed_fields:
-            updates.append(f'{key} = %s')
+            # rank 是 MySQL 保留关键字，需要使用反引号包裹
+            field_name = f'`{key}`' if key == 'rank' else key
+            updates.append(f'{field_name} = %s')
             values.append(value)
     
     if updates:
