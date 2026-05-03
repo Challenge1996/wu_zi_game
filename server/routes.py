@@ -50,8 +50,13 @@ import server
 from server.data_store import (
     sync_player, sync_room, sync_challenge, sync_undo_request,
     sync_chat_message, sync_game_record,
-    sync_spectator_add, sync_spectator_remove
+    sync_spectator_add, sync_spectator_remove,
+    USE_DATABASE
 )
+
+if USE_DATABASE:
+    from server.database import get_player as get_player_from_db
+
 from server.utils import (
     get_player_info,
     get_room_info,
@@ -1516,7 +1521,20 @@ def register_routes(app):
         """
         player_id = request.args.get('player_id')
         
-        if not player_id or player_id not in server.players:
+        if not player_id:
+            return jsonify({
+                "success": False,
+                "message": "缺少player_id参数"
+            }), 400
+        
+        player_exists = False
+        if USE_DATABASE:
+            db_player = get_player_from_db(player_id)
+            player_exists = db_player is not None
+        else:
+            player_exists = player_id in server.players
+        
+        if not player_exists:
             return jsonify({
                 "success": False,
                 "message": "玩家不存在"

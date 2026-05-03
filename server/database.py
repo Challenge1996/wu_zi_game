@@ -40,7 +40,7 @@ class Database:
         db_host = os.environ.get('DB_HOST', 'localhost')
         db_port = int(os.environ.get('DB_PORT', 3306))
         db_user = os.environ.get('DB_USER', 'root')
-        db_password = os.environ.get('DB_PASSWORD', '')
+        db_password = os.environ.get('DB_PASSWORD', '123456')
         db_name = os.environ.get('DB_NAME', 'wuziqi_game')
         
         self._connection = pymysql.connect(

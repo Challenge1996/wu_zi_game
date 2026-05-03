@@ -36,8 +36,16 @@ from util import get_timestamp, generate_id
 import server
 from server.data_store import (
     sync_player, sync_room, sync_chat_message, sync_game_record,
-    sync_spectator_add, sync_spectator_remove
+    sync_spectator_add, sync_spectator_remove,
+    USE_DATABASE
 )
+
+if USE_DATABASE:
+    from server.database import (
+        get_game_record_db,
+        get_player_game_records_db,
+        get_player as get_player_from_db
+    )
 
 
 def get_player_info(player_id):
@@ -797,6 +805,37 @@ def get_game_record(record_id):
     Returns:
         游戏记录对象，不存在返回None
     """
+    if USE_DATABASE:
+        db_record = get_game_record_db(record_id)
+        if db_record:
+            return {
+                'id': db_record['id'],
+                'room_id': db_record.get('room_id'),
+                'room_name': db_record.get('room_name'),
+                
+                'player1_id': db_record.get('player1_id'),
+                'player1_name': db_record.get('player1_name'),
+                'player2_id': db_record.get('player2_id'),
+                'player2_name': db_record.get('player2_name'),
+                
+                'player1_color': db_record.get('player1_color'),
+                'player2_color': db_record.get('player2_color'),
+                
+                'winner_color': db_record.get('winner_color'),
+                'winner_id': db_record.get('winner_id'),
+                
+                'created_at': db_record.get('created_at'),
+                'started_at': db_record.get('started_at'),
+                'finished_at': db_record.get('finished_at'),
+                
+                'move_history': db_record.get('move_history', []),
+                'total_moves': db_record.get('total_moves', 0),
+                
+                'game_over': db_record.get('game_over', False),
+                'resign_reason': db_record.get('resign_reason')
+            }
+        return None
+    
     if record_id not in server.game_records:
         return None
     
@@ -837,6 +876,10 @@ def get_player_game_records(player_id):
     Returns:
         游戏记录列表（简要信息）
     """
+    if USE_DATABASE:
+        db_records = get_player_game_records_db(player_id)
+        return db_records
+    
     if player_id not in server.players:
         return []
     
